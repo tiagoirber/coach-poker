@@ -6,8 +6,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   deploy:
@@ -19,10 +17,17 @@ jobs:
         run: |
           sed -i "s|COLOQUE_SUA_CHAVE_AQUI|${{ secrets.ANTHROPIC_KEY }}|g" index.html
 
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
-          publish_branch: gh-pages
-          force_orphan: true
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy to gh-pages
+        run: |
+          git add -f index.html
+          git stash
+          git checkout -B gh-pages
+          git stash pop
+          git add -f index.html
+          git commit -m "Deploy with API key injected"
+          git push origin gh-pages --force

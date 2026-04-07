@@ -2,34 +2,40 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="theme-color" content="#0a0b0a"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
 <title>Poker Coach IA — 90 Dias</title>
 
-<!-- React + Babel + Tailwind -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<!-- Firebase SDK (compat) -->
+<!-- Firebase SDK -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 
 <style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:#0d0f0e;color:#e7e5e4;font-family:system-ui,sans-serif;height:100vh;overflow:hidden}
-  #root{height:100vh;display:flex;flex-direction:column}
-  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#18181b}::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:4px}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .spin{animation:spin 1s linear infinite}
-  .tooltip-box{position:absolute;z-index:9999;width:220px;background:#27272a;border:1px solid #92400e;border-radius:12px;padding:10px 12px;font-size:11px;line-height:1.6;color:#e7e5e4;box-shadow:0 8px 32px rgba(0,0,0,.6)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body,#root{height:100%;width:100%;overflow:hidden}
+body{background:#0a0b0a;color:#f0ede8;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:999px}
+textarea,input{font-family:inherit}
+@keyframes _spin{to{transform:rotate(360deg)}}
+@keyframes pop{0%{transform:scale(.5);opacity:0}70%{transform:scale(1.15)}100%{transform:scale(1);opacity:1}}
+@keyframes rise{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 
 <script>
-// ── Firebase init ──────────────────────────────────────────────────────────────
+// ── Firebase ──────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyDLgfdHXk87rgvjDia19-BcgKiLRDpUNhU",
   authDomain: "poker-coach-ia.firebaseapp.com",
@@ -39,108 +45,39 @@ const firebaseConfig = {
   appId: "1:310712863013:web:2b0f206cd0d9a41d8172cc"
 };
 firebase.initializeApp(firebaseConfig);
-const auth = firebase.auth();
-const db   = firebase.firestore();
+const fbAuth = firebase.auth();
+const fbDb   = firebase.firestore();
 
 async function fbSave(uid, data) {
-  try { await db.collection("users").doc(uid).set(data, { merge: true }); return true; } catch(e) { return false; }
+  try { await fbDb.collection("users").doc(uid).set(data, { merge: true }); return true; }
+  catch(e) { console.error("fbSave:", e); return false; }
 }
 async function fbLoad(uid) {
-  try { const s = await db.collection("users").doc(uid).get(); return s.exists ? s.data() : null; } catch(e) { return null; }
+  try { const s = await fbDb.collection("users").doc(uid).get(); return s.exists ? s.data() : null; }
+  catch(e) { console.error("fbLoad:", e); return null; }
 }
 </script>
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
 
-// ── GLOSSARY & TOOLTIP ─────────────────────────────────────────────────────────
-const GLOSSARY = {
-  "pot odds":"Relação entre pote e custo de call. Ex: pote 100, call 20 = odds 5:1.",
-  "equity":"Sua chance de ganhar em percentual.",
-  "range":"Conjunto de todas as mãos possíveis que um jogador pode ter.",
-  "c-bet":"Continuation bet — apostar no flop após ter dado raise no pré-flop.",
-  "fold equity":"Chance de ganhar o pote imediatamente com uma aposta.",
-  "3-bet":"Re-raise sobre um raise inicial.",
-  "4-bet":"Raise sobre um 3-bet.",
-  "btn":"Button — melhor posição, age por último.",
-  "bb":"Big Blind — aposta obrigatória maior. Unidade de medida de stack.",
-  "sb":"Small Blind — aposta obrigatória menor.",
-  "spr":"Stack-to-Pot Ratio — razão entre stack e pote.",
-  "ev":"Expected Value — +EV = lucrativo a longo prazo.",
-  "gto":"Game Theory Optimal — estratégia equilibrada, não exploitável.",
-  "mdf":"Minimum Defense Frequency — frequência mínima de defesa.",
-  "icm":"Independent Chip Model — converte fichas em valor monetário real.",
-  "flop":"As 3 primeiras cartas comunitárias.",
-  "turn":"A 4ª carta comunitária.",
-  "river":"A 5ª e última carta comunitária.",
-  "showdown":"Revelação das cartas para determinar o vencedor.",
-  "check-raise":"Checar e então dar raise quando o oponente aposta.",
-  "donk bet":"Apostar fora de posição contra o agressor da rua anterior.",
-  "blocker":"Carta que reduz combinações fortes do oponente.",
-  "polarizado":"Range com mãos muito fortes e blefes, sem medianas.",
-  "overbet":"Aposta maior que o pote.",
-  "semi-bluff":"Blefar com draw que pode melhorar.",
-  "draw":"Mão incompleta que pode virar forte.",
-  "oop":"Out Of Position — agir antes do oponente.",
-  "squeeze":"3-bet com callers à frente.",
-  "float":"Chamar fraco para roubar numa rua futura.",
-  "solver":"Software de cálculo GTO. Ex: PioSolver.",
-  "winrate":"Taxa de ganho em bb/100 mãos.",
-  "downswing":"Período de resultados negativos.",
-  "all-in":"Apostar todas as fichas.",
-  "jam":"Gíria para all-in em torneios.",
-  "steal":"Roubar os blinds com raise de posição tardia.",
-  "thin value":"Apostar para valor com margem pequena.",
-  "barrel":"Apostar em múltiplas ruas consecutivas.",
-  "multiway":"Pote com 3 ou mais jogadores.",
-  "heads-up":"Disputa entre dois jogadores.",
+// ── DESIGN TOKENS ─────────────────────────────────────────────────────────────
+const T = {
+  bg:"#0a0b0a", surface:"#111412", card:"#161a16",
+  border:"rgba(255,255,255,.06)", borderHover:"rgba(255,255,255,.12)",
+  text:"#f0ede8", textSub:"#6b7280", textMid:"#9ca3af",
+  gold:"#c8a045", goldLight:"#f59e0b",
+  green:"#059669", greenLight:"#34d399",
+};
+const CAT = {
+  MATH:    {bg:"rgba(6,78,59,.25)",   text:"#34d399", border:"rgba(52,211,153,.2)",  dot:"#34d399"},
+  PREFLOP: {bg:"rgba(30,58,138,.25)", text:"#93c5fd", border:"rgba(147,197,253,.2)", dot:"#93c5fd"},
+  POSTFLOP:{bg:"rgba(76,29,149,.25)", text:"#c4b5fd", border:"rgba(196,181,253,.2)", dot:"#c4b5fd"},
+  MENTAL:  {bg:"rgba(120,53,15,.25)", text:"#fbbf24", border:"rgba(251,191,36,.2)",  dot:"#fbbf24"},
+  ICM:     {bg:"rgba(127,29,29,.25)", text:"#fca5a5", border:"rgba(252,165,165,.2)", dot:"#fca5a5"},
 };
 
-function Tooltip({ term, children }) {
-  const [vis, setVis] = React.useState(false);
-  const [above, setAbove] = React.useState(true);
-  const ref = React.useRef(null);
-  const timer = React.useRef(null);
-  const def = GLOSSARY[term.toLowerCase()];
-  if (!def) return React.createElement('span', null, children);
-  const show = () => { clearTimeout(timer.current); if (ref.current) { const r = ref.current.getBoundingClientRect(); setAbove(r.top > 130); } setVis(true); };
-  const hide = () => { timer.current = setTimeout(() => setVis(false), 150); };
-  const toggle = e => { e.stopPropagation(); setVis(v => !v); };
-  return (
-    <span ref={ref} style={{position:"relative",display:"inline"}}>
-      <span onMouseEnter={show} onMouseLeave={hide} onClick={toggle}
-        style={{borderBottom:"1.5px dashed #f59e0b",color:"#fcd34d",cursor:"help"}}>
-        {children}
-      </span>
-      {vis && (
-        <span onMouseEnter={()=>clearTimeout(timer.current)} onMouseLeave={hide}
-          className="tooltip-box"
-          style={{[above?"bottom":"top"]:"calc(100% + 6px)",left:0}}>
-          <span style={{display:"block",color:"#f59e0b",fontWeight:900,fontSize:10,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{term.toUpperCase()}</span>
-          {def}
-        </span>
-      )}
-    </span>
-  );
-}
-
-function AnnotatedText({ text }) {
-  if (!text || typeof text !== "string") return <span>{text}</span>;
-  const keys = Object.keys(GLOSSARY).sort((a,b)=>b.length-a.length);
-  const re = new RegExp(`\\b(${keys.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|")})\\b`,"gi");
-  const parts=[]; let last=0; const used=new Set(); let m;
-  const r2=new RegExp(re.source,"gi");
-  while((m=r2.exec(text))!==null){
-    const k=m[0].toLowerCase(); if(used.has(k))continue; used.add(k);
-    if(m.index>last) parts.push({t:"text",v:text.slice(last,m.index)});
-    parts.push({t:"term",v:m[0],k}); last=m.index+m[0].length;
-  }
-  if(last<text.length) parts.push({t:"text",v:text.slice(last)});
-  if(!parts.length) return <span>{text}</span>;
-  return <span>{parts.map((p,i)=>p.t==="term"?<Tooltip key={i} term={p.k}>{p.v}</Tooltip>:<span key={i}>{p.v}</span>)}</span>;
-}
-
-// ── CURRICULUM ─────────────────────────────────────────────────────────────────
+// ── CURRICULUM ────────────────────────────────────────────────────────────────
 const CURRICULUM = [
   {day:1,week:1,title:"Pot Odds & Equidade",description:"A relação matemática entre pote e custo de uma call.",category:"MATH"},
   {day:2,week:1,title:"Ranges Pré-Flop (RFI)",description:"Quais mãos abrir de cada posição.",category:"PREFLOP"},
@@ -233,44 +170,177 @@ const CURRICULUM = [
   {day:89,week:13,title:"Construindo seu Estilo",description:"Integrar GTO com exploração.",category:"MENTAL"},
   {day:90,week:13,title:"Mindset de Elite",description:"A psicologia dos vencedores de High Stakes.",category:"MENTAL"},
 ];
-const ALL_WEEKS=[...new Set(CURRICULUM.map(t=>t.week))].sort((a,b)=>a-b);
-const getTopicsForWeek=w=>CURRICULUM.filter(t=>t.week===w);
+const ALL_WEEKS = [...new Set(CURRICULUM.map(t=>t.week))].sort((a,b)=>a-b);
+const getTopicsForWeek = w => CURRICULUM.filter(t=>t.week===w);
 
-// ── POKER CARD ──────────────────────────────────────────────────────────────────
-function PokerCard({card,size="md"}){
-  const d={sm:{w:40,h:56,fs:12,ss:18},md:{w:56,h:80,fs:14,ss:26},lg:{w:80,h:112,fs:16,ss:38}}[size];
-  if(!card||card==="??") return <div style={{width:d.w,height:d.h,background:"#064e3b",border:"2px solid #065f46",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:"#6ee7b7",fontWeight:900,fontSize:d.fs}}>?</div>;
-  const rank=card.slice(0,-1),suit=card.slice(-1),red=suit==="h"||suit==="d";
-  const sym={h:"♥",d:"♦",c:"♣",s:"♠"}[suit]||"",clr=red?"#b91c1c":"#0d0f0e";
+// ── GLOSSARY & TOOLTIP ────────────────────────────────────────────────────────
+const GLOSSARY = {
+  "pot odds":"Relação entre pote e custo de call. Ex: pote 100, call 20 = odds 5:1.",
+  "equity":"Sua chance de ganhar em percentual.",
+  "range":"Conjunto de todas as mãos possíveis de um jogador em dada situação.",
+  "c-bet":"Continuation bet — apostar no flop após ter dado raise pré-flop.",
+  "fold equity":"Chance de ganhar o pote imediatamente com uma aposta.",
+  "3-bet":"Re-raise sobre um raise inicial.",
+  "4-bet":"Raise sobre um 3-bet.",
+  "btn":"Button — melhor posição, age por último.",
+  "bb":"Big Blind — aposta obrigatória maior. Unidade de medida de stack.",
+  "sb":"Small Blind — aposta obrigatória menor.",
+  "spr":"Stack-to-Pot Ratio — razão entre stack e pote.",
+  "ev":"Expected Value — +EV = lucrativo a longo prazo.",
+  "gto":"Game Theory Optimal — estratégia equilibrada e não exploitável.",
+  "mdf":"Minimum Defense Frequency — frequência mínima de defesa.",
+  "icm":"Independent Chip Model — converte fichas em valor monetário real.",
+  "flop":"As 3 primeiras cartas comunitárias.",
+  "turn":"A 4ª carta comunitária.",
+  "river":"A 5ª e última carta comunitária.",
+  "showdown":"Revelação das cartas para determinar o vencedor.",
+  "check-raise":"Checar e então dar raise quando o oponente aposta.",
+  "donk bet":"Apostar fora de posição contra o agressor anterior.",
+  "blocker":"Carta que reduz combinações fortes do oponente.",
+  "polarizado":"Range só com mãos muito fortes e blefes.",
+  "overbet":"Aposta maior que o pote.",
+  "semi-bluff":"Blefar com draw que pode melhorar.",
+  "draw":"Mão incompleta que pode virar forte.",
+  "oop":"Out Of Position — agir antes do oponente.",
+  "squeeze":"3-bet com callers à frente.",
+  "float":"Chamar fraco para roubar numa rua futura.",
+  "solver":"Software de cálculo GTO como PioSolver.",
+  "winrate":"Taxa de ganho em bb/100 mãos.",
+  "downswing":"Período de resultados negativos.",
+  "all-in":"Apostar todas as fichas.",
+  "jam":"Gíria para all-in.",
+  "steal":"Roubar os blinds com raise de posição tardia.",
+  "thin value":"Apostar para valor com margem pequena.",
+  "barrel":"Apostar em múltiplas ruas consecutivas.",
+  "multiway":"Pote com 3+ jogadores.",
+  "heads-up":"Disputa entre dois jogadores.",
+};
+
+function Tooltip({term,children}) {
+  const [vis,setVis]=useState(false);
+  const [pos,setPos]=useState({top:true,left:true});
+  const ref=useRef(null);
+  const timer=useRef(null);
+  const def=GLOSSARY[term.toLowerCase()];
+  if(!def) return <span>{children}</span>;
+  const show=()=>{clearTimeout(timer.current);if(ref.current){const r=ref.current.getBoundingClientRect();setPos({top:r.top>140,left:r.left<window.innerWidth/2});}setVis(true);};
+  const hide=()=>{timer.current=setTimeout(()=>setVis(false),150);};
+  const toggle=e=>{e.stopPropagation();setVis(v=>!v);};
   return(
-    <div style={{width:d.w,height:d.h,background:"white",borderRadius:8,boxShadow:"0 6px 20px rgba(0,0,0,.5)",border:"2px solid #e2e8f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:6,userSelect:"none"}}>
+    <span ref={ref} style={{position:"relative",display:"inline"}}>
+      <span onMouseEnter={show} onMouseLeave={hide} onClick={toggle}
+        style={{borderBottom:"1px dashed rgba(245,158,11,.5)",color:"#fcd34d",cursor:"help"}}>{children}</span>
+      {vis&&(
+        <span onMouseEnter={()=>clearTimeout(timer.current)} onMouseLeave={hide}
+          style={{position:"absolute",zIndex:9999,[pos.top?"bottom":"top"]:"calc(100% + 8px)",[pos.left?"left":"right"]:0,width:210,background:"#1c1f1c",border:"1px solid rgba(200,160,69,.3)",borderRadius:10,padding:"10px 12px",fontSize:11,lineHeight:1.6,color:T.text,boxShadow:"0 12px 40px rgba(0,0,0,.7)",display:"block"}}>
+          <span style={{display:"block",color:T.gold,fontWeight:700,fontSize:9,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4}}>{term.toUpperCase()}</span>
+          {def}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function AnnotatedText({text}) {
+  if(!text||typeof text!=="string") return <span>{text}</span>;
+  const keys=Object.keys(GLOSSARY).sort((a,b)=>b.length-a.length);
+  const re=new RegExp(`\\b(${keys.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")).join("|")})\\b`,"gi");
+  const parts=[];let last=0;const used=new Set();let m;
+  const r2=new RegExp(re.source,"gi");
+  while((m=r2.exec(text))!==null){
+    const k=m[0].toLowerCase();if(used.has(k))continue;used.add(k);
+    if(m.index>last)parts.push({t:"text",v:text.slice(last,m.index)});
+    parts.push({t:"term",v:m[0],k});last=m.index+m[0].length;
+  }
+  if(last<text.length)parts.push({t:"text",v:text.slice(last)});
+  if(!parts.length)return <span>{text}</span>;
+  return <span>{parts.map((p,i)=>p.t==="term"?<Tooltip key={i} term={p.k}>{p.v}</Tooltip>:<span key={i}>{p.v}</span>)}</span>;
+}
+
+// ── SHARED COMPONENTS ─────────────────────────────────────────────────────────
+function Spinner({size=36,color=T.gold}) {
+  return <div style={{width:size,height:size,border:"3px solid rgba(255,255,255,.08)",borderTopColor:color,borderRadius:"50%",animation:"_spin .9s linear infinite",flexShrink:0}}/>;
+}
+
+function CatBadge({category,small}) {
+  const c=CAT[category]||CAT.MENTAL;
+  return(
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,fontSize:small?9:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase",padding:small?"2px 6px":"3px 8px",borderRadius:999,background:c.bg,color:c.text,border:`1px solid ${c.border}`}}>
+      <span style={{width:small?4:5,height:small?4:5,borderRadius:"50%",background:c.dot,flexShrink:0}}/>
+      {category}
+    </span>
+  );
+}
+
+function PokerCard({card,size="md"}) {
+  const d={sm:{w:36,h:50,fs:11,ss:16},md:{w:52,h:74,fs:13,ss:24},lg:{w:76,h:108,fs:15,ss:36}}[size];
+  if(!card||card==="??") return <div style={{width:d.w,height:d.h,background:"rgba(6,78,59,.3)",border:"1px solid rgba(52,211,153,.2)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:"#34d399",fontWeight:700,fontSize:d.fs}}>?</div>;
+  const rank=card.slice(0,-1),suit=card.slice(-1),red=suit==="h"||suit==="d";
+  const sym={h:"♥",d:"♦",c:"♣",s:"♠"}[suit]||"",clr=red?"#c0392b":"#1a1a1a";
+  return(
+    <div style={{width:d.w,height:d.h,background:"#fafaf8",borderRadius:8,boxShadow:"0 8px 24px rgba(0,0,0,.5)",border:"1.5px solid rgba(255,255,255,.9)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"space-between",padding:5,userSelect:"none"}}>
       <span style={{alignSelf:"flex-start",fontWeight:900,fontSize:d.fs,color:clr,lineHeight:1}}>{rank}</span>
-      <span style={{fontSize:d.ss,color:clr,lineHeight:1,fontFamily:"serif"}}>{sym}</span>
+      <span style={{fontSize:d.ss,color:clr,lineHeight:1,fontFamily:"Georgia,serif"}}>{sym}</span>
       <span style={{alignSelf:"flex-end",fontWeight:900,fontSize:d.fs,color:clr,lineHeight:1,transform:"rotate(180deg)"}}>{rank}</span>
     </div>
   );
 }
 
-// ── API ─────────────────────────────────────────────────────────────────────────
-async function callClaudeJSON(sys,prompt,maxTokens=1200){
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:prompt}]})});
+function ProgressArc({value,total,size=80}) {
+  const pct=value/total,r=(size/2)-6,circ=2*Math.PI*r;
+  const dash=circ*pct,gap=circ*(1-pct);
+  return(
+    <svg width={size} height={size} style={{transform:"rotate(-90deg)"}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="rgba(255,255,255,.05)" strokeWidth={5}/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={T.gold} strokeWidth={5} strokeDasharray={`${dash} ${gap}`} strokeLinecap="round" style={{transition:"stroke-dasharray .6s ease"}}/>
+    </svg>
+  );
+}
+
+// ── API HELPERS ───────────────────────────────────────────────────────────────
+// ⚠️ SUBSTITUA pela sua chave em: https://console.anthropic.com
+const ANTHROPIC_KEY = "COLOQUE_SUA_CHAVE_AQUI";
+
+async function callClaudeJSON(sys,prompt,maxTokens=1200) {
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:prompt}]})});
   const data=await res.json();
   const text=(data.content||[]).map(b=>b.text||"").join("");
   try{return JSON.parse(text.replace(/```json|```/g,"").trim());}catch{return null;}
 }
-async function callClaudeText(sys,prompt,maxTokens=2000){
-  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:prompt}]})});
+async function callClaudeText(sys,prompt,maxTokens=2000) {
+  const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:prompt}]})});
   const data=await res.json();
   return (data.content||[]).map(b=>b.text||"").join("");
 }
 
-// ── SPINNER ─────────────────────────────────────────────────────────────────────
-function Spinner({size=40,color="#f59e0b"}){
-  return <div className="spin" style={{width:size,height:size,border:`4px solid ${color}`,borderTopColor:"transparent",borderRadius:"50%",flexShrink:0}}/>;
+// ── CELEBRATION ───────────────────────────────────────────────────────────────
+function CelebrationScreen({day,onContinue}) {
+  const [show,setShow]=useState(false);
+  useEffect(()=>{setTimeout(()=>setShow(true),50);},[]);
+  const next=CURRICULUM.find(t=>t.day===day.day+1);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(10,11,10,.97)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:100,padding:24,textAlign:"center",transition:"opacity .4s",opacity:show?1:0}}>
+      <div style={{fontSize:72,animation:"pop .5s cubic-bezier(.34,1.56,.64,1) forwards",marginBottom:8}}>🏆</div>
+      <div style={{animation:"rise .5s .2s both"}}>
+        <p style={{fontSize:13,color:T.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8}}>Dia {day.day} Concluído</p>
+        <h1 style={{fontSize:28,fontWeight:900,color:T.text,lineHeight:1.2,marginBottom:6}}>{day.title}</h1>
+        <p style={{color:T.textSub,fontSize:13,marginBottom:32}}>Excelente. Seu jogo está evoluindo.</p>
+        {next&&(
+          <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:"14px 20px",marginBottom:24,textAlign:"left"}}>
+            <p style={{fontSize:10,color:T.textSub,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>A seguir — Dia {next.day}</p>
+            <p style={{color:T.text,fontWeight:700,fontSize:15}}>{next.title}</p>
+          </div>
+        )}
+        <button onClick={onContinue} style={{background:T.gold,color:"#0a0b0a",fontWeight:800,fontSize:14,padding:"14px 36px",borderRadius:12,border:"none",cursor:"pointer"}}>
+          {next?"Próxima Lição →":"Ver Progresso"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
-// ── THEORY ──────────────────────────────────────────────────────────────────────
-function TheoryModule({topic,onComplete}){
+// ── THEORY ────────────────────────────────────────────────────────────────────
+function TheoryModule({topic,onComplete}) {
   const [content,setContent]=useState(null);
   const [loading,setLoading]=useState(true);
   const [feynman,setFeynman]=useState("");
@@ -278,46 +348,65 @@ function TheoryModule({topic,onComplete}){
   useEffect(()=>{
     setLoading(true);
     callClaudeJSON("Você é um coach de poker de elite. Responda APENAS com JSON válido.",
-      `Lição Dia ${topic.day}: "${topic.title}" — ${topic.description}. JSON: {"title":"...","contentMarkdown":"4 parágrafos explicativos","keyPoints":["...","...","...","..."],"analogy":"analogia criativa"}`
-    ).then(d=>{setContent(d||{title:topic.title,contentMarkdown:topic.description,keyPoints:["Estude","Aplique","Identifique spots","Pratique"],analogy:`${topic.title} é como timing no xadrez.`});setLoading(false);});
+      `Lição Dia ${topic.day}: "${topic.title}" — ${topic.description}. JSON: {"title":"...","contentMarkdown":"4 parágrafos explicativos com exemplos","keyPoints":["...","...","...","..."],"analogy":"analogia criativa e memorável"}`
+    ).then(d=>{setContent(d||{title:topic.title,contentMarkdown:topic.description,keyPoints:["Estude","Aplique","Identifique","Pratique"],analogy:`${topic.title} é como timing perfeito no xadrez.`});setLoading(false);});
   },[topic]);
-  if(loading) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:256,gap:16}}><Spinner/><p style={{color:"#a8a29e"}}>Preparando lição...</p></div>;
-  const ok=feynman.length>20&&example.length>10;
+  if(loading) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:280,gap:16}}><Spinner/><p style={{color:T.textSub,fontSize:13}}>Preparando sua lição...</p></div>;
+  const canProceed=feynman.length>20&&example.length>10;
   return(
-    <div style={{maxWidth:720,margin:"0 auto",paddingBottom:40,display:"flex",flexDirection:"column",gap:24}}>
-      <div style={{borderBottom:"1px solid #27272a",paddingBottom:16}}>
-        <h1 style={{fontSize:22,fontWeight:900,color:"#fbbf24"}}>{content.title}</h1>
-        <p style={{color:"#a8a29e",fontStyle:"italic",marginTop:4,fontSize:13}}>"{content.analogy}"</p>
+    <div style={{maxWidth:680,margin:"0 auto",paddingBottom:48,display:"flex",flexDirection:"column",gap:20}}>
+      <div style={{paddingBottom:16,borderBottom:`1px solid ${T.border}`}}>
+        <p style={{fontSize:11,color:T.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Conceito central</p>
+        <h1 style={{fontSize:24,fontWeight:900,color:T.text,lineHeight:1.2,marginBottom:6}}>{content.title}</h1>
+        <p style={{color:T.textSub,fontSize:13,fontStyle:"italic",lineHeight:1.5}}>"{content.analogy}"</p>
       </div>
-      <div style={{background:"#18181b",borderRadius:12,border:"1px solid #27272a",padding:24,display:"flex",flexDirection:"column",gap:12}}>
-        {content.contentMarkdown.split("\n").filter(Boolean).map((l,i)=><p key={i} style={{color:"#d6d3d1",lineHeight:1.7,fontSize:14}}><AnnotatedText text={l.replace(/^#+\s/,"")}/></p>)}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {content.contentMarkdown.split("\n").filter(Boolean).map((l,i)=>(
+          <p key={i} style={{color:T.textMid,lineHeight:1.75,fontSize:14}}><AnnotatedText text={l.replace(/^#+\s/,"")}/></p>
+        ))}
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-        <div style={{background:"rgba(6,78,59,.2)",border:"1px solid rgba(6,78,59,.5)",borderRadius:12,padding:20}}>
-          <h3 style={{fontWeight:700,color:"#6ee7b7",marginBottom:12,fontSize:12,textTransform:"uppercase"}}>📌 Pontos-Chave</h3>
-          {content.keyPoints.map((pt,i)=><div key={i} style={{display:"flex",gap:8,fontSize:13,color:"#d6d3d1",marginBottom:8}}><span style={{color:"#fbbf24",fontWeight:700}}>{i+1}.</span>{pt}</div>)}
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:20}}>
+        <p style={{fontSize:11,color:T.greenLight,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:14}}>📌 Pontos-Chave</p>
+        <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {content.keyPoints.map((pt,i)=>(
+            <div key={i} style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+              <span style={{width:22,height:22,borderRadius:6,background:"rgba(200,160,69,.15)",border:"1px solid rgba(200,160,69,.2)",color:T.gold,fontWeight:800,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1}}>{i+1}</span>
+              <p style={{color:T.text,fontSize:14,lineHeight:1.5}}>{pt}</p>
+            </div>
+          ))}
         </div>
-        <div style={{background:"rgba(24,24,27,.8)",border:"1px solid #27272a",borderRadius:12,padding:20}}>
-          <h3 style={{fontWeight:700,color:"#d6d3d1",marginBottom:12,fontSize:12,textTransform:"uppercase"}}>✍️ Aprendizado Ativo</h3>
-          <label style={{fontSize:11,color:"#78716c",fontWeight:700,textTransform:"uppercase"}}>Técnica Feynman</label>
-          <textarea value={feynman} onChange={e=>setFeynman(e.target.value)} rows={2} placeholder="Como explicaria para um iniciante?" style={{width:"100%",marginTop:4,background:"#09090b",border:"1px solid #27272a",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#e7e5e4",outline:"none",resize:"none",marginBottom:8,display:"block"}}/>
-          <label style={{fontSize:11,color:"#78716c",fontWeight:700,textTransform:"uppercase"}}>Seu exemplo prático</label>
-          <textarea value={example} onChange={e=>setExample(e.target.value)} rows={2} placeholder="Ex: Se eu tiver AK no BTN e..." style={{width:"100%",marginTop:4,background:"#09090b",border:"1px solid #27272a",borderRadius:8,padding:"8px 10px",fontSize:13,color:"#e7e5e4",outline:"none",resize:"none",display:"block"}}/>
+      </div>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,padding:20}}>
+        <p style={{fontSize:11,color:T.textMid,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:4}}>✍️ Consolidação Ativa</p>
+        <p style={{fontSize:12,color:T.textSub,marginBottom:16}}>Escrever reforça a memória. Complete os dois campos para avançar.</p>
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          <div>
+            <label style={{fontSize:12,color:T.textMid,fontWeight:600,display:"block",marginBottom:6}}>Explique com suas palavras</label>
+            <textarea value={feynman} onChange={e=>setFeynman(e.target.value)} rows={2} placeholder="Como você explicaria para um amigo que nunca jogou poker?"
+              style={{width:"100%",background:"rgba(255,255,255,.03)",border:`1px solid ${feynman.length>20?"rgba(52,211,153,.3)":T.border}`,borderRadius:10,padding:"10px 12px",fontSize:13,color:T.text,outline:"none",resize:"none"}}/>
+          </div>
+          <div>
+            <label style={{fontSize:12,color:T.textMid,fontWeight:600,display:"block",marginBottom:6}}>Crie um exemplo prático</label>
+            <textarea value={example} onChange={e=>setExample(e.target.value)} rows={2} placeholder="Ex: No BTN com KQ, o vilão c-bet 40% no flop A72..."
+              style={{width:"100%",background:"rgba(255,255,255,.03)",border:`1px solid ${example.length>10?"rgba(52,211,153,.3)":T.border}`,borderRadius:10,padding:"10px 12px",fontSize:13,color:T.text,outline:"none",resize:"none"}}/>
+          </div>
         </div>
       </div>
       <div style={{display:"flex",justifyContent:"flex-end"}}>
-        <button onClick={onComplete} disabled={!ok} style={{padding:"10px 28px",borderRadius:12,fontWeight:700,fontSize:13,border:"none",cursor:ok?"pointer":"not-allowed",background:ok?"#d97706":"#27272a",color:ok?"#0c0a09":"#78716c"}}>
-          {ok?"Ir para o Quiz →":"Complete o aprendizado ativo para avançar"}
+        <button onClick={onComplete} disabled={!canProceed}
+          style={{padding:"12px 28px",borderRadius:11,fontWeight:700,fontSize:14,border:"none",cursor:canProceed?"pointer":"not-allowed",background:canProceed?T.gold:"rgba(255,255,255,.05)",color:canProceed?"#0a0b0a":T.textSub,transition:"all .2s"}}>
+          {canProceed?"Ir para o Quiz →":"Complete os campos acima"}
         </button>
       </div>
     </div>
   );
 }
 
-// ── QUIZ ────────────────────────────────────────────────────────────────────────
+// ── QUIZ ──────────────────────────────────────────────────────────────────────
 const DIFFS=["FÁCIL","MÉDIO","DIFÍCIL"];
-const DC={"FÁCIL":{dot:"#34d399",text:"#34d399",bg:"rgba(6,78,59,.4)",border:"#064e3b"},"MÉDIO":{dot:"#fbbf24",text:"#fbbf24",bg:"rgba(120,53,15,.4)",border:"#78350f"},"DIFÍCIL":{dot:"#f87171",text:"#f87171",bg:"rgba(127,29,29,.4)",border:"#7f1d1d"}};
-function QuizModule({topic,onComplete}){
+const DC={"FÁCIL":{dot:"#34d399",text:"#34d399",bg:"rgba(6,78,59,.3)",border:"rgba(52,211,153,.25)"},"MÉDIO":{dot:"#fbbf24",text:"#fbbf24",bg:"rgba(120,53,15,.3)",border:"rgba(251,191,36,.25)"},"DIFÍCIL":{dot:"#f87171",text:"#f87171",bg:"rgba(127,29,29,.3)",border:"rgba(248,113,113,.25)"}};
+
+function QuizModule({topic,onComplete}) {
   const [roundIdx,setRoundIdx]=useState(0);
   const [questions,setQuestions]=useState([null,null,null]);
   const [loading,setLoading]=useState(true);
@@ -325,48 +414,65 @@ function QuizModule({topic,onComplete}){
   const [submitted,setSubmitted]=useState(false);
   const [scores,setScores]=useState([]);
   const [mistakes,setMistakes]=useState([]);
-  const fetchQ=useCallback((round)=>{
+  const fetchQ=useCallback(round=>{
     setLoading(true);setSel(null);setSubmitted(false);
-    callClaudeJSON("Coach poker. APENAS JSON (objeto único).",`Pergunta ${DIFFS[round]} Dia ${topic.day}: "${topic.title}". JSON:{"difficulty":"${DIFFS[round]}","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"..."}`)
-    .then(d=>{const q=Array.isArray(d)?d[0]:d;setQuestions(p=>{const n=[...p];n[round]=(q&&q.question)?q:{difficulty:DIFFS[round],question:`Aplicação de ${topic.title}?`,options:["Fold equity","Valor e proteção","Sempre pot","Depende"],correctIndex:1,explanation:`${topic.title}: equilíbrio é fundamental.`};return n;});setLoading(false);});
+    callClaudeJSON("Coach poker. APENAS JSON (objeto único).",
+      `Pergunta ${DIFFS[round]} Dia ${topic.day}: "${topic.title}". JSON:{"difficulty":"${DIFFS[round]}","question":"...","options":["...","...","...","..."],"correctIndex":0,"explanation":"..."}`
+    ).then(d=>{
+      const q=Array.isArray(d)?d[0]:d;
+      setQuestions(p=>{const n=[...p];n[round]=(q&&q.question)?q:{difficulty:DIFFS[round],question:`Aplicação de ${topic.title}?`,options:["Fold equity","Valor e proteção","Sempre pot","Depende"],correctIndex:1,explanation:`${topic.title}: equilíbrio é fundamental.`};return n;});
+      setLoading(false);
+    });
   },[topic]);
   useEffect(()=>{fetchQ(0);},[topic]);
   const q=questions[roundIdx];
   const submit=()=>{if(sel===null||!q)return;setSubmitted(true);const ok=sel===q.correctIndex;setScores(p=>[...p,ok?1:0]);if(!ok)setMistakes(p=>[...p,q.question]);};
   const next=()=>{if(roundIdx<2){const n=roundIdx+1;setRoundIdx(n);if(!questions[n])fetchQ(n);else{setSel(null);setSubmitted(false);}}else{onComplete(scores.reduce((a,b)=>a+b,0)+(sel===(q&&q.correctIndex)?1:0),mistakes);}};
   return(
-    <div style={{maxWidth:600,margin:"0 auto",paddingTop:24,display:"flex",flexDirection:"column",gap:20}}>
-      <div style={{display:"flex",gap:8,alignItems:"center"}}>
+    <div style={{maxWidth:600,margin:"0 auto",paddingTop:8,display:"flex",flexDirection:"column",gap:20}}>
+      <div style={{display:"flex",alignItems:"center",gap:8}}>
         {DIFFS.map((d,i)=>{const dc=DC[d],act=i===roundIdx,done=i<roundIdx;return(
-          <div key={d} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:999,border:`1px solid ${act?dc.border:done?"#3f3f46":"#27272a"}`,background:act?dc.bg:"transparent",color:act?dc.text:done?"#78716c":"#52525b",fontSize:11,fontWeight:700}}>
-            <div style={{width:8,height:8,borderRadius:"50%",background:act?dc.dot:done?"#52525b":"#3f3f46"}}/>{d}{done&&" ✓"}
+          <div key={d} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 12px",borderRadius:999,border:`1px solid ${act?dc.border:done?"rgba(255,255,255,.08)":"rgba(255,255,255,.04)"}`,background:act?dc.bg:"transparent",color:act?dc.text:done?T.textSub:"rgba(255,255,255,.2)",fontSize:11,fontWeight:700}}>
+            <div style={{width:6,height:6,borderRadius:"50%",background:act?dc.dot:done?"rgba(255,255,255,.2)":"rgba(255,255,255,.08)"}}/>{d}{done&&" ✓"}
           </div>
         );})}
-        <span style={{marginLeft:"auto",fontSize:11,color:"#78716c",fontWeight:700}}>{scores.reduce((a,b)=>a+b,0)}/{roundIdx} corretas</span>
+        <span style={{marginLeft:"auto",fontSize:11,color:T.textSub}}>{scores.reduce((a,b)=>a+b,0)}/{roundIdx} corretas</span>
       </div>
-      {(loading||!q)?<div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:192,gap:16}}><Spinner size={40}/><p style={{color:"#a8a29e",fontSize:13}}>Gerando questão {DIFFS[roundIdx]}...</p></div>:(
+      {(loading||!q)?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:200,gap:16}}><Spinner size={36}/><p style={{color:T.textSub,fontSize:13}}>Gerando questão {DIFFS[roundIdx]}...</p></div>
+      ):(
         <>
-          <div style={{background:"#18181b",borderRadius:16,border:"1px solid #27272a",padding:24}}>
-            <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",borderRadius:999,border:`1px solid ${DC[q.difficulty||DIFFS[roundIdx]].border}`,background:DC[q.difficulty||DIFFS[roundIdx]].bg,color:DC[q.difficulty||DIFFS[roundIdx]].text,fontSize:10,fontWeight:700,marginBottom:16}}>
-              <div style={{width:6,height:6,borderRadius:"50%",background:DC[q.difficulty||DIFFS[roundIdx]].dot}}/>{q.difficulty||DIFFS[roundIdx]}
+          <div style={{background:T.card,borderRadius:16,border:`1px solid ${T.border}`,padding:24}}>
+            <div style={{display:"inline-flex",alignItems:"center",gap:5,padding:"3px 10px",borderRadius:999,border:`1px solid ${DC[q.difficulty||DIFFS[roundIdx]].border}`,background:DC[q.difficulty||DIFFS[roundIdx]].bg,color:DC[q.difficulty||DIFFS[roundIdx]].text,fontSize:10,fontWeight:700,marginBottom:18}}>
+              <div style={{width:5,height:5,borderRadius:"50%",background:DC[q.difficulty||DIFFS[roundIdx]].dot}}/>{q.difficulty||DIFFS[roundIdx]}
             </div>
-            <p style={{color:"white",fontWeight:600,fontSize:15,lineHeight:1.6,marginBottom:20}}>{q.question}</p>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <p style={{color:T.text,fontWeight:600,fontSize:16,lineHeight:1.55,marginBottom:20}}>{q.question}</p>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {q.options.map((opt,i)=>{
-                let bg="rgba(39,39,42,.2)",border="#27272a",color="#d6d3d1";
-                if(submitted){if(i===q.correctIndex){bg="rgba(6,78,59,.4)";border="#059669";color="#6ee7b7";}else if(i===sel){bg="rgba(127,29,29,.4)";border="#dc2626";color="#fca5a5";}else{bg="rgba(9,9,11,.2)";color="#52525b";}}
-                else if(i===sel){bg="rgba(120,53,15,.3)";border="#f59e0b";color="#fcd34d";}
-                return <button key={i} onClick={()=>!submitted&&setSel(i)} style={{textAlign:"left",padding:"10px 14px",borderRadius:12,border:`1px solid ${border}`,background:bg,color,fontSize:13,fontWeight:500,cursor:submitted?"default":"pointer"}}><span style={{fontWeight:700,marginRight:8,opacity:.5}}>{String.fromCharCode(65+i)}.</span>{opt}</button>;
+                let bg="rgba(255,255,255,.02)",border=T.border,color=T.textMid;
+                if(submitted){if(i===q.correctIndex){bg="rgba(5,150,105,.15)";border="rgba(52,211,153,.4)";color="#34d399";}else if(i===sel){bg="rgba(127,29,29,.2)";border="rgba(248,113,113,.4)";color="#f87171";}else{color="rgba(255,255,255,.2)";}}
+                else if(i===sel){bg="rgba(200,160,69,.1)";border="rgba(200,160,69,.4)";color=T.text;}
+                return(
+                  <button key={i} onClick={()=>!submitted&&setSel(i)}
+                    style={{textAlign:"left",padding:"12px 16px",borderRadius:10,border:`1px solid ${border}`,background:bg,color,fontSize:13,fontWeight:500,cursor:submitted?"default":"pointer",transition:"all .15s",display:"flex",alignItems:"center",gap:10}}>
+                    <span style={{width:22,height:22,borderRadius:6,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,fontWeight:700,flexShrink:0,color:"inherit"}}>{String.fromCharCode(65+i)}</span>
+                    {opt}
+                  </button>
+                );
               })}
             </div>
           </div>
-          {submitted&&<div style={{borderRadius:12,padding:16,border:`1px solid ${sel===q.correctIndex?"#059669":"#dc2626"}`,background:sel===q.correctIndex?"rgba(6,78,59,.3)":"rgba(127,29,29,.3)"}}>
-            <p style={{fontWeight:700,marginBottom:6,color:sel===q.correctIndex?"#34d399":"#f87171"}}>{sel===q.correctIndex?"✓ Correto!":"✗ Incorreto"}</p>
-            <p style={{color:"#d6d3d1",fontSize:13,lineHeight:1.6}}><AnnotatedText text={q.explanation}/></p>
-          </div>}
+          {submitted&&(
+            <div style={{borderRadius:12,padding:16,border:`1px solid ${sel===q.correctIndex?"rgba(52,211,153,.2)":"rgba(248,113,113,.2)"}`,background:sel===q.correctIndex?"rgba(5,150,105,.08)":"rgba(127,29,29,.1)"}}>
+              <p style={{fontWeight:700,marginBottom:6,fontSize:13,color:sel===q.correctIndex?"#34d399":"#f87171"}}>{sel===q.correctIndex?"✓ Correto!":"✗ Incorreto"}</p>
+              <p style={{color:T.textMid,fontSize:13,lineHeight:1.6}}><AnnotatedText text={q.explanation}/></p>
+            </div>
+          )}
           <div style={{display:"flex",justifyContent:"flex-end"}}>
-            {!submitted?<button onClick={submit} disabled={sel===null} style={{padding:"8px 20px",background:"#d97706",color:"#0c0a09",borderRadius:12,fontWeight:700,fontSize:13,border:"none",cursor:sel===null?"not-allowed":"pointer",opacity:sel===null?0.3:1}}>Confirmar</button>
-            :<button onClick={next} style={{padding:"8px 20px",background:"#d97706",color:"#0c0a09",borderRadius:12,fontWeight:700,fontSize:13,border:"none",cursor:"pointer"}}>{roundIdx<2?`Próximo: ${DIFFS[roundIdx+1]} →`:"Ver Resultado →"}</button>}
+            {!submitted
+              ?<button onClick={submit} disabled={sel===null} style={{padding:"11px 24px",background:sel===null?"rgba(255,255,255,.04)":T.gold,color:sel===null?T.textSub:"#0a0b0a",borderRadius:10,fontWeight:700,fontSize:13,border:"none",cursor:sel===null?"not-allowed":"pointer",transition:"all .2s"}}>Confirmar</button>
+              :<button onClick={next} style={{padding:"11px 24px",background:T.gold,color:"#0a0b0a",borderRadius:10,fontWeight:700,fontSize:13,border:"none",cursor:"pointer"}}>{roundIdx<2?`Próximo: ${DIFFS[roundIdx+1]} →`:"Ver Resultado →"}</button>
+            }
           </div>
         </>
       )}
@@ -374,17 +480,17 @@ function QuizModule({topic,onComplete}){
   );
 }
 
-// ── SCENARIO CARD ───────────────────────────────────────────────────────────────
+// ── SCENARIO CARD ─────────────────────────────────────────────────────────────
 const SIM_SYS="Você é um coach de poker GTO de altíssimo nível. Escreva em português do Brasil. Seja extremamente detalhado e didático.";
 const ACTIONS=[
-  {k:"FOLD",icon:"✗",bg:"rgba(127,29,29,.6)",text:"#f87171",border:"#7f1d1d",activeBg:"#dc2626",activeText:"white"},
-  {k:"CHECK",icon:"○",bg:"rgba(12,74,110,.6)",text:"#7dd3fc",border:"#0c4a6e",activeBg:"#0284c7",activeText:"white"},
-  {k:"BET_SMALL",icon:"↑",bg:"rgba(6,78,59,.6)",text:"#6ee7b7",border:"#064e3b",activeBg:"#059669",activeText:"white"},
-  {k:"BET_BIG",icon:"↑↑",bg:"rgba(120,53,15,.6)",text:"#fcd34d",border:"#78350f",activeBg:"#d97706",activeText:"#0c0a09"},
-  {k:"RAISE",icon:"⚡",bg:"rgba(76,29,149,.6)",text:"#c4b5fd",border:"#4c1d95",activeBg:"#7c3aed",activeText:"white"},
+  {k:"FOLD",icon:"✗",label:"Fold",bg:"rgba(127,29,29,.5)",text:"#f87171",border:"rgba(248,113,113,.2)",activeBg:"#dc2626",activeText:"white"},
+  {k:"CHECK",icon:"○",label:"Check",bg:"rgba(12,74,110,.5)",text:"#7dd3fc",border:"rgba(125,209,252,.2)",activeBg:"#0284c7",activeText:"white"},
+  {k:"BET_SMALL",icon:"↑",label:"Bet P",bg:"rgba(6,78,59,.5)",text:"#34d399",border:"rgba(52,211,153,.2)",activeBg:"#059669",activeText:"white"},
+  {k:"BET_BIG",icon:"↑↑",label:"Bet G",bg:"rgba(120,53,15,.5)",text:"#fbbf24",border:"rgba(251,191,36,.2)",activeBg:"#d97706",activeText:"#0a0b0a"},
+  {k:"RAISE",icon:"⚡",label:"Raise",bg:"rgba(76,29,149,.5)",text:"#c4b5fd",border:"rgba(196,181,253,.2)",activeBg:"#7c3aed",activeText:"white"},
 ];
 
-function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}){
+function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}) {
   const [scenario,setScenario]=useState(null);
   const [loadingS,setLoadingS]=useState(true);
   const [action,setAction]=useState(null);
@@ -400,8 +506,9 @@ function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}){
     setLoadingS(true);setScenario(null);setAction(null);setReasoning("");setShowResult(false);setExpl("");setEv("");setGto("");
     const isComb=Array.isArray(combinedTopics)&&combinedTopics.length>1;
     const body=isComb?`Cenário DIFÍCIL combinando:\n${combinedTopics.map(t=>`• Dia ${t.day}: ${t.title}`).join("\n")}\nSeed:${handKey}`:`Cenário ${levelKey} Dia ${topic.day}: "${topic.title}". Seed:${handKey}`;
-    callClaudeJSON("Coach GTO. APENAS JSON (objeto único).",`${body}\nJSON:{"description":"...","streets":[{"name":"Pré-Flop","board":[],"potBefore":"...","actions":[{"actor":"VILLAIN","action":"...","potAfter":"..."},{"actor":"HERO","action":"...","potAfter":"..."}]},{"name":"Flop","board":["Tc","7d","2s"],"potBefore":"...","actions":[{"actor":"VILLAIN","action":"...","potAfter":"..."},{"actor":"HERO","action":"...","potAfter":"..."}]}],"heroHand":["As","Jh"],"board":["Tc","7d","2s"],"position":"BTN","stackSize":"45 BB","villainProfile":"TIGHT","correctAction":"BET_SMALL"}`,1400)
-    .then(s=>{
+    callClaudeJSON("Coach GTO. APENAS JSON.",
+      `${body}\nJSON:{"description":"...","streets":[{"name":"Pré-Flop","board":[],"potBefore":"...","actions":[{"actor":"VILLAIN","action":"...","potAfter":"..."},{"actor":"HERO","action":"...","potAfter":"..."}]},{"name":"Flop","board":["Tc","7d","2s"],"potBefore":"...","actions":[{"actor":"VILLAIN","action":"...","potAfter":"..."},{"actor":"HERO","action":"...","potAfter":"..."}]}],"heroHand":["As","Jh"],"board":["Tc","7d","2s"],"position":"BTN","stackSize":"45 BB","villainProfile":"TIGHT","correctAction":"BET_SMALL"}`,1400
+    ).then(s=>{
       const sc=Array.isArray(s)?s[0]:s;
       if(sc&&sc.heroHand){if(!Array.isArray(sc.streets))sc.streets=[];setScenario(sc);}
       else setScenario({description:`Spot de ${topic.title}.`,heroHand:["As","Jh"],board:["Kd","7c","2h","5s"],position:"BTN",stackSize:"35 BB",villainProfile:"TIGHT",correctAction:"BET_SMALL",streets:[{name:"Pré-Flop",board:[],potBefore:"1.5 BB",actions:[{actor:"VILLAIN",action:"Raise 2.5 BB",potAfter:"3.5 BB"},{actor:"HERO",action:"Call 2.5 BB",potAfter:"5.5 BB"}]},{name:"Flop",board:["Kd","7c","2h"],potBefore:"5.5 BB",actions:[{actor:"VILLAIN",action:"Check",potAfter:"5.5 BB"},{actor:"HERO",action:"Bet 3.5 BB",potAfter:"9 BB"}]},{name:"Turn",board:["Kd","7c","2h","5s"],potBefore:"12.5 BB",actions:[{actor:"VILLAIN",action:"Check",potAfter:"12.5 BB"},{actor:"HERO",action:"???",potAfter:"–"}]}]});
@@ -416,39 +523,39 @@ function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}){
     Promise.all([
       callClaudeText(SIM_SYS,`${ctx}\n\nJUSTIFICATIVA — 4 parágrafos (mín 120 palavras cada):\n1. Por que "${scenario.correctAction}" é +EV.\n2. Por que FOLD desperdiça equity.\n3. Por que CHECK/CALL é passivo demais.\n4. Por que RAISE/BET_BIG comprime o SPR de forma ruim.`,2000),
       callClaudeText(SIM_SYS,`${ctx}\n\nANÁLISE DE EV — 3 parágrafos (mín 120 palavras cada):\n1. Cálculo EV=(fold_eq×pot)+(1-fold_eq)×(equity×pot_total-custo).\n2. Comparação entre FOLD, CHECK, BET_SMALL, BET_BIG, RAISE.\n3. Impacto do SPR com 20 BB ou 150 BB.`,2000),
-      callClaudeText(SIM_SYS,`${ctx}\n\nANÁLISE GTO — 3 parágrafos (mín 120 palavras cada):\n1. Frequências do solver para este spot.\n2. Por que este sizing vs outros.\n3. Balanceamento: valor, blefes e semi-blefes.`,2000),
+      callClaudeText(SIM_SYS,`${ctx}\n\nANÁLISE GTO — 3 parágrafos (mín 120 palavras cada):\n1. Frequências do solver.\n2. Por que este sizing vs outros.\n3. Balanceamento: valor, blefes e semi-blefes.`,2000),
     ]).then(([e,v,g])=>{setExpl(e);setEv(v);setGto(g);setLoadingA(false);});
   },[action,scenario,reasoning]);
 
-  if(loadingS||!scenario) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:224,gap:16}}><Spinner/><p style={{color:"#a8a29e",fontSize:13}}>Gerando cenário...</p></div>;
+  if(loadingS||!scenario) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:240,gap:16}}><Spinner/><p style={{color:T.textSub,fontSize:13}}>Gerando cenário...</p></div>;
   const isCorrect=action===scenario.correctAction;
   const activeText=tab==="EXPLANATION"?expl:tab==="EV"?ev:gto;
 
   return(
-    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <div style={{background:"#18181b",border:"1px solid #27272a",borderRadius:12,padding:16}}>
-          <p style={{fontSize:11,color:"#f59e0b",fontWeight:700,textTransform:"uppercase",marginBottom:8}}>📋 Cenário</p>
-          <p style={{color:"#e7e5e4",fontSize:13,lineHeight:1.6}}><AnnotatedText text={scenario.description}/></p>
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:16}}>
+          <p style={{fontSize:10,color:T.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:10}}>📋 Cenário</p>
+          <p style={{color:T.textMid,fontSize:13,lineHeight:1.6}}><AnnotatedText text={scenario.description}/></p>
         </div>
-        <div style={{background:"#09090b",border:"1px solid rgba(6,78,59,.4)",borderRadius:12,padding:16,maxHeight:256,overflowY:"auto"}}>
-          <p style={{fontSize:11,color:"#34d399",fontWeight:700,textTransform:"uppercase",marginBottom:12}}>🃏 Histórico da Mão</p>
+        <div style={{background:"rgba(6,78,59,.06)",border:"1px solid rgba(52,211,153,.1)",borderRadius:12,padding:16,maxHeight:220,overflowY:"auto"}}>
+          <p style={{fontSize:10,color:T.greenLight,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:12}}>🃏 Histórico</p>
           {(scenario.streets||[]).map((st,si)=>(
-            <div key={si} style={{marginBottom:12}}>
+            <div key={si} style={{marginBottom:10}}>
               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                <span style={{fontSize:11,fontWeight:900,textTransform:"uppercase",color:"#fbbf24"}}>{st.name}</span>
-                {(st.board||[]).length>0&&<span style={{fontSize:11,color:"#52525b",fontFamily:"monospace"}}>[{st.board.join(" ")}]</span>}
-                <div style={{flex:1,height:1,background:"#27272a"}}/>
-                <span style={{fontSize:10,color:"#3f3f46",fontFamily:"monospace"}}>Pote: {st.potBefore}</span>
+                <span style={{fontSize:10,fontWeight:800,textTransform:"uppercase",color:T.gold}}>{st.name}</span>
+                {(st.board||[]).length>0&&<span style={{fontSize:10,color:T.textSub,fontFamily:"monospace"}}>[{st.board.join(" ")}]</span>}
+                <div style={{flex:1,height:"1px",background:T.border}}/>
+                <span style={{fontSize:9,color:"rgba(255,255,255,.15)",fontFamily:"monospace"}}>{st.potBefore}</span>
               </div>
               {(st.actions||[]).map((a,ai)=>{
                 const hero=a.actor==="HERO",info=a.actor==="INFO";
-                const fold=/fold/i.test(a.action),bet=/bet|raise|jam/i.test(a.action),call=/call/i.test(a.action),check=/check/i.test(a.action);
+                const fold=/fold/i.test(a.action),bet=/bet|raise|jam/i.test(a.action),call=/call/i.test(a.action);
                 return(
-                  <div key={ai} style={{display:"flex",alignItems:"center",gap:8,paddingLeft:8,marginBottom:4}}>
-                    {!info&&<span style={{fontSize:10,fontWeight:900,padding:"1px 6px",borderRadius:4,textTransform:"uppercase",background:hero?"rgba(120,53,15,.5)":"rgba(39,39,42,.8)",color:hero?"#fcd34d":"#a8a29e",border:`1px solid ${hero?"rgba(245,158,11,.4)":"#3f3f46"}`,whiteSpace:"nowrap"}}>{hero?"HERO":"VLN"}</span>}
-                    <span style={{fontSize:12,fontWeight:600,color:info?"#52525b":fold?"#f87171":bet?(hero?"#fcd34d":"#fb923c"):call?"#7dd3fc":check?"#71717a":"#d6d3d1",fontStyle:info?"italic":"normal"}}>{a.action}</span>
-                    {a.potAfter&&a.potAfter!=="–"&&!info&&<span style={{marginLeft:"auto",fontSize:10,color:"#3f3f46",fontFamily:"monospace",whiteSpace:"nowrap"}}>→ {a.potAfter}</span>}
+                  <div key={ai} style={{display:"flex",alignItems:"center",gap:8,paddingLeft:8,marginBottom:3}}>
+                    {!info&&<span style={{fontSize:9,fontWeight:800,padding:"1px 5px",borderRadius:3,textTransform:"uppercase",background:hero?"rgba(200,160,69,.12)":"rgba(255,255,255,.04)",color:hero?T.gold:T.textSub,border:`1px solid ${hero?"rgba(200,160,69,.2)":"rgba(255,255,255,.06)"}`,whiteSpace:"nowrap"}}>{hero?"HERO":"VLN"}</span>}
+                    <span style={{fontSize:12,fontWeight:600,color:info?T.textSub:fold?"#f87171":bet?(hero?T.gold:"#fb923c"):call?"#7dd3fc":"rgba(255,255,255,.4)",fontStyle:info?"italic":"normal"}}>{a.action}</span>
+                    {a.potAfter&&a.potAfter!=="–"&&!info&&<span style={{marginLeft:"auto",fontSize:9,color:"rgba(255,255,255,.2)",fontFamily:"monospace",whiteSpace:"nowrap"}}>→ {a.potAfter}</span>}
                   </div>
                 );
               })}
@@ -456,76 +563,82 @@ function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}){
           ))}
         </div>
       </div>
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
         {[["📍",scenario.position],["💰",scenario.stackSize],["🎭",scenario.villainProfile]].map(([icon,val])=>(
-          <span key={val} style={{background:"#18181b",border:"1px solid #27272a",padding:"4px 10px",borderRadius:8,fontSize:12,color:"#a8a29e"}}>{icon} {val}</span>
+          <span key={val} style={{background:"rgba(255,255,255,.03)",border:`1px solid ${T.border}`,padding:"4px 10px",borderRadius:8,fontSize:11,color:T.textSub}}>{icon} {val}</span>
         ))}
       </div>
-      <div style={{position:"relative",borderRadius:24,overflow:"hidden",border:"8px solid rgba(120,53,15,.6)",minHeight:320,background:"radial-gradient(ellipse at center,#1c3d2a 0%,#0f2418 55%,#080f0b 100%)"}}>
-        <div style={{position:"absolute",top:16,left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-          <span style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",color:"rgba(255,255,255,.2)"}}>Board</span>
-          <div style={{display:"flex",gap:12}}>
-            {(scenario.board||[]).length>0?scenario.board.map((c,i)=><PokerCard key={i} card={c} size="lg"/>):<div style={{color:"rgba(255,255,255,.1)",fontWeight:900,fontSize:20,textTransform:"uppercase",padding:"24px 0"}}>PRE-FLOP</div>}
+      <div style={{position:"relative",borderRadius:20,overflow:"hidden",border:"6px solid rgba(120,53,15,.5)",minHeight:300,background:"radial-gradient(ellipse at center,#1a3d24 0%,#0d1f13 60%,#080f0b 100%)"}}>
+        <div style={{position:"absolute",top:14,left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+          <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",color:"rgba(255,255,255,.15)"}}>Board</span>
+          <div style={{display:"flex",gap:10}}>
+            {(scenario.board||[]).length>0?scenario.board.map((c,i)=><PokerCard key={i} card={c} size="lg"/>):<div style={{color:"rgba(255,255,255,.08)",fontWeight:900,fontSize:16,textTransform:"uppercase",padding:"20px 0"}}>PRE-FLOP</div>}
           </div>
         </div>
-        <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
-          <div style={{display:"flex",gap:12}}>
+        <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+          <div style={{display:"flex",gap:10}}>
             <PokerCard card={(scenario.heroHand||[])[0]} size="lg"/>
             <PokerCard card={(scenario.heroHand||[])[1]} size="lg"/>
           </div>
-          <span style={{background:"rgba(0,0,0,.6)",color:"#fbbf24",fontSize:11,fontWeight:700,padding:"4px 14px",borderRadius:999,border:"1px solid rgba(245,158,11,.3)"}}>Hero · {scenario.position}</span>
+          <span style={{background:"rgba(0,0,0,.7)",backdropFilter:"blur(8px)",color:T.gold,fontSize:10,fontWeight:700,padding:"4px 12px",borderRadius:999,border:"1px solid rgba(200,160,69,.25)"}}>Hero · {scenario.position}</span>
         </div>
       </div>
       {!showResult?(
         <div style={{display:"flex",flexDirection:"column",gap:12}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
             {ACTIONS.map(a=>{const s=action===a.k;return(
-              <button key={a.k} onClick={()=>setAction(a.k)} style={{padding:"12px 4px",borderRadius:12,fontWeight:900,fontSize:11,textTransform:"uppercase",border:`1px solid ${s?a.activeBg:a.border}`,borderBottom:`4px solid ${s?a.activeBg:a.border}`,background:s?a.activeBg:a.bg,color:s?a.activeText:a.text,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,transform:s?"translateY(-3px)":"translateY(0)"}}>
-                <span style={{fontSize:16,lineHeight:1}}>{a.icon}</span>
-                <span>{a.k.replace("_"," ")}</span>
+              <button key={a.k} onClick={()=>setAction(a.k)} style={{padding:"12px 4px",borderRadius:10,fontWeight:800,fontSize:10,textTransform:"uppercase",letterSpacing:"0.04em",border:`1px solid ${s?a.activeBg:a.border}`,borderBottom:`3px solid ${s?a.activeBg:a.border}`,background:s?a.activeBg:a.bg,color:s?a.activeText:a.text,cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:4,transform:s?"translateY(-2px)":"none",transition:"all .15s"}}>
+                <span style={{fontSize:15,lineHeight:1}}>{a.icon}</span>
+                <span>{a.label}</span>
               </button>
             );})}
           </div>
           {action&&(
-            <div style={{background:"rgba(24,24,27,.9)",borderRadius:12,border:"1px solid #27272a",padding:16,display:"flex",flexDirection:"column",gap:12}}>
-              <label style={{fontSize:11,fontWeight:700,color:"#78716c",textTransform:"uppercase"}}>🧠 Raciocínio para <span style={{color:"#fbbf24"}}>{action.replace("_"," ")}</span></label>
-              <textarea value={reasoning} onChange={e=>setReasoning(e.target.value)} rows={2} placeholder="Descreva sua lógica estratégica..." style={{width:"100%",background:"#09090b",border:"1px solid #27272a",borderRadius:8,padding:"10px 12px",fontSize:13,color:"#e7e5e4",outline:"none",resize:"none"}}/>
-              <div style={{display:"flex",justifyContent:"flex-end"}}>
-                <button onClick={handleConfirm} disabled={reasoning.trim().length<5} style={{background:"#059669",color:"white",padding:"8px 20px",borderRadius:8,fontWeight:700,fontSize:13,border:"none",cursor:reasoning.trim().length<5?"not-allowed":"pointer",opacity:reasoning.trim().length<5?0.3:1}}>Confirmar →</button>
+            <div style={{background:T.card,borderRadius:12,border:`1px solid ${T.border}`,padding:16}}>
+              <label style={{fontSize:11,fontWeight:700,color:T.textSub,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:8}}>
+                🧠 Por que <span style={{color:T.gold}}>{action.replace("_"," ")}</span>?
+              </label>
+              <textarea value={reasoning} onChange={e=>setReasoning(e.target.value)} rows={2} placeholder="Descreva sua lógica estratégica..."
+                style={{width:"100%",background:"rgba(255,255,255,.02)",border:`1px solid ${T.border}`,borderRadius:8,padding:"10px 12px",fontSize:13,color:T.text,outline:"none",resize:"none"}}/>
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:10}}>
+                <button onClick={handleConfirm} disabled={reasoning.trim().length<5}
+                  style={{background:reasoning.trim().length<5?"rgba(255,255,255,.04)":"#059669",color:reasoning.trim().length<5?T.textSub:"white",padding:"9px 20px",borderRadius:9,fontWeight:700,fontSize:13,border:"none",cursor:reasoning.trim().length<5?"not-allowed":"pointer",transition:"all .2s"}}>
+                  Confirmar →
+                </button>
               </div>
             </div>
           )}
         </div>
       ):(
-        <div style={{borderRadius:16,border:`1px solid ${isCorrect?"rgba(5,150,105,.5)":"rgba(220,38,38,.5)"}`,padding:20,display:"flex",flexDirection:"column",gap:16,background:isCorrect?"rgba(6,78,59,.2)":"rgba(127,29,29,.2)"}}>
+        <div style={{borderRadius:14,border:`1px solid ${isCorrect?"rgba(52,211,153,.2)":"rgba(248,113,113,.15)"}`,padding:20,display:"flex",flexDirection:"column",gap:14,background:isCorrect?"rgba(5,150,105,.06)":"rgba(127,29,29,.08)"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
             <div>
-              <h3 style={{fontSize:22,fontWeight:900,color:isCorrect?"#34d399":"#f87171"}}>{isCorrect?"MÃO PERFEITA 🏆":"JOGADA -EV ❌"}</h3>
+              <h3 style={{fontSize:20,fontWeight:900,color:isCorrect?"#34d399":"#f87171"}}>{isCorrect?"Jogada Perfeita 🏆":"Linha -EV ❌"}</h3>
               <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
-                <span style={{fontSize:11,color:"#78716c",fontWeight:700,textTransform:"uppercase"}}>GTO:</span>
-                <span style={{color:"#fbbf24",fontWeight:900}}>{scenario.correctAction.replace("_"," ")}</span>
+                <span style={{fontSize:10,color:T.textSub,fontWeight:700,textTransform:"uppercase"}}>GTO:</span>
+                <span style={{color:T.gold,fontWeight:800,fontSize:13}}>{scenario.correctAction.replace("_"," ")}</span>
               </div>
             </div>
-            <div style={{fontSize:18,fontWeight:900,padding:"8px 16px",borderRadius:8,background:"rgba(0,0,0,.4)",color:isCorrect?"#34d399":"#f87171"}}>{isCorrect?"+EV":"-EV"}</div>
+            <div style={{fontSize:16,fontWeight:900,padding:"8px 16px",borderRadius:8,background:"rgba(0,0,0,.3)",color:isCorrect?"#34d399":"#f87171"}}>{isCorrect?"+EV":"-EV"}</div>
           </div>
-          <div style={{display:"flex",background:"rgba(9,9,11,.6)",padding:4,borderRadius:8,border:"1px solid #27272a",gap:2}}>
-            {[["EXPLANATION","📖 Justificativa"],["EV","📊 Análise EV"],["GTO","🎯 GTO"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"6px 4px",borderRadius:6,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:tab===k?"#27272a":"transparent",color:tab===k?"white":"#78716c"}}>{l}</button>
+          <div style={{display:"flex",background:"rgba(255,255,255,.02)",padding:3,borderRadius:10,border:`1px solid ${T.border}`,gap:2}}>
+            {[["EXPLANATION","📖 Análise"],["EV","📊 EV"],["GTO","🎯 GTO"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"7px 4px",borderRadius:8,border:"none",cursor:"pointer",fontSize:11,fontWeight:700,background:tab===k?T.card:"transparent",color:tab===k?T.text:T.textSub,transition:"all .15s"}}>{l}</button>
             ))}
           </div>
-          <div style={{background:"rgba(0,0,0,.2)",borderRadius:12,padding:20,minHeight:160,maxHeight:384,overflowY:"auto",fontSize:13}}>
+          <div style={{background:"rgba(0,0,0,.15)",borderRadius:10,padding:18,minHeight:140,maxHeight:360,overflowY:"auto",fontSize:13}}>
             {loadingA?(
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:128,gap:12}}><Spinner size={32}/><p style={{color:"#a8a29e",fontSize:12}}>Analisando o spot...</p></div>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:120,gap:12}}><Spinner size={28}/><p style={{color:T.textSub,fontSize:12}}>Analisando o spot em profundidade...</p></div>
             ):(
-              <div style={{display:"flex",flexDirection:"column",gap:16}}>
-                {tab==="EV"&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><div style={{width:8,height:8,borderRadius:"50%",background:"#fbbf24"}}/><span style={{color:"#fbbf24",fontWeight:900,fontSize:11,textTransform:"uppercase"}}>Expected Value</span></div>}
-                {tab==="GTO"&&<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}><div style={{width:8,height:8,borderRadius:"50%",background:"#2dd4bf"}}/><span style={{color:"#2dd4bf",fontWeight:900,fontSize:11,textTransform:"uppercase"}}>Recomendação GTO</span></div>}
-                {activeText.length>0?activeText.split(/\n\n+/).filter(Boolean).map((p,i)=><p key={i} style={{color:"#e7e5e4",lineHeight:1.7}}><AnnotatedText text={p}/></p>):<p style={{color:"#52525b",fontStyle:"italic"}}>Carregando análise...</p>}
+              <div style={{display:"flex",flexDirection:"column",gap:14}}>
+                {tab==="EV"&&<p style={{fontSize:10,fontWeight:700,color:T.gold,textTransform:"uppercase",letterSpacing:"0.06em"}}>Expected Value</p>}
+                {tab==="GTO"&&<p style={{fontSize:10,fontWeight:700,color:T.greenLight,textTransform:"uppercase",letterSpacing:"0.06em"}}>Recomendação GTO</p>}
+                {activeText.length>0?activeText.split(/\n\n+/).filter(Boolean).map((p,i)=><p key={i} style={{color:T.textMid,lineHeight:1.75}}><AnnotatedText text={p}/></p>):<p style={{color:T.textSub,fontStyle:"italic"}}>Carregando análise...</p>}
               </div>
             )}
           </div>
           <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <button onClick={onNext} style={{background:"#d97706",color:"#0c0a09",fontWeight:900,padding:"10px 24px",borderRadius:12,border:"none",cursor:"pointer",fontSize:13}}>{nextLabel}</button>
+            <button onClick={onNext} style={{background:T.gold,color:"#0a0b0a",fontWeight:800,padding:"11px 24px",borderRadius:10,border:"none",cursor:"pointer",fontSize:13}}>{nextLabel}</button>
           </div>
         </div>
       )}
@@ -533,41 +646,41 @@ function ScenarioCard({topic,levelKey,handKey,onNext,nextLabel,combinedTopics}){
   );
 }
 
-// ── SIMULATOR ───────────────────────────────────────────────────────────────────
-const SIM_LEVELS=[{k:"EASY",label:"Fácil",dot:"#34d399",bg:"rgba(6,78,59,.4)",border:"#064e3b",text:"#34d399"},{k:"MEDIUM",label:"Médio",dot:"#fbbf24",bg:"rgba(120,53,15,.4)",border:"#78350f",text:"#fbbf24"},{k:"HARD",label:"Difícil",dot:"#f87171",bg:"rgba(127,29,29,.4)",border:"#7f1d1d",text:"#f87171"}];
-function SimulatorModule({topic,completedDays,onComplete}){
+// ── SIMULATOR ─────────────────────────────────────────────────────────────────
+const SIM_LEVELS=[{k:"EASY",label:"Fácil",dot:"#34d399",bg:"rgba(6,78,59,.3)",border:"rgba(52,211,153,.2)",text:"#34d399"},{k:"MEDIUM",label:"Médio",dot:"#fbbf24",bg:"rgba(120,53,15,.3)",border:"rgba(251,191,36,.2)",text:"#fbbf24"},{k:"HARD",label:"Difícil",dot:"#f87171",bg:"rgba(127,29,29,.3)",border:"rgba(248,113,113,.2)",text:"#f87171"}];
+
+function SimulatorModule({topic,completedDays,onComplete}) {
   const [phase,setPhase]=useState(0);
   const [handKey,setHandKey]=useState(0);
-  const [fc,setFc]=useState(0);
-  const [gc,setGc]=useState(0);
+  const [fc,setFc]=useState(0);const [gc,setGc]=useState(0);
   const completedTopics=CURRICULUM.filter(t=>completedDays.includes(t.day));
   const lvl=SIM_LEVELS[Math.min(phase,2)];
-  const nextLabel=phase===0?"Subir para Médio →":phase===1?"Subir para Difícil →":phase===2?"Concluir Treino ✓":phase===4?"Próximo Spot Focado →":"Próximo Spot Combinado →";
+  const nextLabel=phase===0?"Subir para Médio →":phase===1?"Subir para Difícil →":phase===2?"Concluir Treino ✓":"Próximo Spot →";
   const handleNext=()=>{if(phase<2){setPhase(p=>p+1);setHandKey(k=>k+1);}else if(phase===2){setPhase(3);}else if(phase===4){setFc(c=>c+1);setHandKey(k=>k+1);}else{setGc(c=>c+1);setHandKey(k=>k+1);}};
   return(
-    <div style={{maxWidth:900,margin:"0 auto",paddingBottom:64,display:"flex",flexDirection:"column",gap:20}}>
-      {phase<=2&&<div style={{display:"flex",gap:8}}>{SIM_LEVELS.map((l,i)=><div key={l.k} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:999,border:`1px solid ${phase===i?l.border:"#27272a"}`,background:phase===i?l.bg:"transparent",color:phase===i?l.text:phase>i?"#52525b":"#3f3f46",fontSize:11,fontWeight:700}}><div style={{width:8,height:8,borderRadius:"50%",background:phase===i?l.dot:phase>i?"#52525b":"#3f3f46"}}/>{l.label}{phase>i&&" ✓"}</div>)}</div>}
+    <div style={{maxWidth:900,margin:"0 auto",paddingBottom:60,display:"flex",flexDirection:"column",gap:16}}>
+      {phase<=2&&<div style={{display:"flex",gap:8}}>{SIM_LEVELS.map((l,i)=><div key={l.k} style={{display:"flex",alignItems:"center",gap:5,padding:"4px 12px",borderRadius:999,border:`1px solid ${phase===i?l.border:"rgba(255,255,255,.05)"}`,background:phase===i?l.bg:"transparent",color:phase===i?l.text:phase>i?T.textSub:"rgba(255,255,255,.15)",fontSize:11,fontWeight:700}}><div style={{width:6,height:6,borderRadius:"50%",background:phase===i?l.dot:phase>i?"rgba(255,255,255,.2)":"rgba(255,255,255,.06)"}}/>{l.label}{phase>i&&" ✓"}</div>)}</div>}
       {(phase===4||phase===5)&&<div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 14px",borderRadius:999,border:"1px solid",fontSize:11,fontWeight:700,background:phase===4?"rgba(127,29,29,.3)":"rgba(67,56,202,.3)",borderColor:phase===4?"#7f1d1d":"#3730a3",color:phase===4?"#f87171":"#a5b4fc"}}>{phase===4?`⚡ Treino Focado · #${fc}`:`🌐 Treino Geral · #${gc}`}</div>
-        <button onClick={()=>setPhase(3)} style={{fontSize:11,color:"#52525b",background:"transparent",border:"1px solid #27272a",padding:"4px 12px",borderRadius:8,cursor:"pointer"}}>← Modos</button>
+        <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 12px",borderRadius:999,border:"1px solid",fontSize:11,fontWeight:700,background:phase===4?"rgba(127,29,29,.2)":"rgba(67,56,202,.2)",borderColor:phase===4?"rgba(248,113,113,.2)":"rgba(165,180,252,.2)",color:phase===4?"#f87171":"#a5b4fc"}}>{phase===4?`⚡ Focado · Spot #${fc}`:`🌐 Geral · Spot #${gc}`}</div>
+        <button onClick={()=>setPhase(3)} style={{fontSize:11,color:T.textSub,background:"transparent",border:`1px solid ${T.border}`,padding:"4px 12px",borderRadius:8,cursor:"pointer"}}>← Modos</button>
       </div>}
       {phase===3?(
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:24,paddingTop:32,textAlign:"center"}}>
-          <div style={{width:56,height:56,borderRadius:16,background:"rgba(120,53,15,.3)",border:"1px solid rgba(245,158,11,.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>🏆</div>
-          <div><h2 style={{fontSize:22,fontWeight:900,color:"white",marginBottom:8}}>Treino Avançado Desbloqueado!</h2><p style={{color:"#a8a29e",fontSize:13}}>Escolha como continuar:</p></div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,width:"100%",maxWidth:480}}>
-            <button onClick={()=>{setPhase(4);setFc(1);setHandKey(k=>k+1);}} style={{background:"#18181b",border:"1px solid rgba(127,29,29,.5)",borderRadius:16,padding:24,textAlign:"left",cursor:"pointer"}}>
-              <div style={{fontSize:24,marginBottom:12}}>⚡</div>
-              <h3 style={{color:"white",fontWeight:900,fontSize:16,marginBottom:6}}>Treino Focado</h3>
-              <p style={{color:"#78716c",fontSize:12,lineHeight:1.5}}>Spots difíceis sobre <span style={{color:"#fcd34d"}}>{topic.title}</span>.</p>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:20,paddingTop:24,textAlign:"center"}}>
+          <div style={{width:52,height:52,borderRadius:14,background:"rgba(200,160,69,.1)",border:"1px solid rgba(200,160,69,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:26}}>🏆</div>
+          <div><h2 style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:6}}>Treino Avançado</h2><p style={{color:T.textSub,fontSize:13}}>Escolha o modo de continuação</p></div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,width:"100%",maxWidth:460}}>
+            <button onClick={()=>{setPhase(4);setFc(1);setHandKey(k=>k+1);}} style={{background:T.card,border:"1px solid rgba(248,113,113,.2)",borderRadius:14,padding:20,textAlign:"left",cursor:"pointer"}}>
+              <div style={{fontSize:22,marginBottom:10}}>⚡</div>
+              <h3 style={{color:T.text,fontWeight:800,fontSize:15,marginBottom:4}}>Focado</h3>
+              <p style={{color:T.textSub,fontSize:12,lineHeight:1.5}}>Spots sobre <span style={{color:T.gold}}>{topic.title}</span>.</p>
             </button>
-            <button onClick={completedDays.length>0?()=>{setPhase(5);setGc(1);setHandKey(k=>k+1);}:undefined} style={{background:"#18181b",border:"1px solid rgba(67,56,202,.5)",borderRadius:16,padding:24,textAlign:"left",cursor:completedDays.length>0?"pointer":"not-allowed",opacity:completedDays.length>0?1:0.4}}>
-              <div style={{fontSize:24,marginBottom:12}}>🌐</div>
-              <h3 style={{color:"white",fontWeight:900,fontSize:16,marginBottom:6}}>Treino Geral</h3>
-              <p style={{color:"#78716c",fontSize:12,lineHeight:1.5}}>{completedDays.length>0?<span>IA combina <span style={{color:"#a5b4fc"}}>{completedDays.length} conceitos</span>.</span>:"Complete outras lições primeiro."}</p>
+            <button onClick={completedDays.length>0?()=>{setPhase(5);setGc(1);setHandKey(k=>k+1);}:undefined} style={{background:T.card,border:"1px solid rgba(165,180,252,.15)",borderRadius:14,padding:20,textAlign:"left",cursor:completedDays.length>0?"pointer":"not-allowed",opacity:completedDays.length>0?1:0.4}}>
+              <div style={{fontSize:22,marginBottom:10}}>🌐</div>
+              <h3 style={{color:T.text,fontWeight:800,fontSize:15,marginBottom:4}}>Geral</h3>
+              <p style={{color:T.textSub,fontSize:12,lineHeight:1.5}}>{completedDays.length>0?<span>IA combina <span style={{color:"#a5b4fc"}}>{completedDays.length} conceitos</span>.</span>:"Complete outras lições."}</p>
             </button>
           </div>
-          <button onClick={onComplete} style={{fontSize:13,color:"#52525b",background:"transparent",border:"none",cursor:"pointer"}}>← Voltar ao módulo</button>
+          <button onClick={onComplete} style={{fontSize:12,color:T.textSub,background:"transparent",border:"none",cursor:"pointer",marginTop:4}}>← Encerrar sessão</button>
         </div>
       ):(
         <ScenarioCard key={`${lvl.k}-${topic.day}-${handKey}-${phase}`} topic={topic} levelKey={phase>=4?"HARD":lvl.k} handKey={handKey} onNext={handleNext} nextLabel={nextLabel} combinedTopics={phase===5?completedTopics:null}/>
@@ -576,134 +689,116 @@ function SimulatorModule({topic,completedDays,onComplete}){
   );
 }
 
-// ── FLASHCARDS ──────────────────────────────────────────────────────────────────
-function FlashcardsView({cards,onClose}){
-  const [idx,setIdx]=useState(0);const [flip,setFlip]=useState(false);const [done,setDone]=useState(false);
-  const all=cards.length>0?cards:[{id:"1",front:"O que é Pot Odds?",back:"Relação entre pote e custo de call."},{id:"2",front:"Quando usar C-Bet?",back:"Com range advantage ou board favorável."},{id:"3",front:"O que é ICM?",back:"Converte fichas em valor monetário real."}];
-  const cur=all[idx];
-  if(done) return <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100%",gap:24}}><div style={{width:80,height:80,background:"#059669",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:40}}>✓</div><h2 style={{fontSize:28,fontWeight:900,color:"white"}}>Sessão Completa!</h2><p style={{color:"#a8a29e"}}>Você revisou {all.length} cards.</p><button onClick={onClose} style={{background:"#27272a",color:"white",padding:"10px 24px",borderRadius:12,border:"none",cursor:"pointer",fontWeight:700}}>← Voltar</button></div>;
-  return(
-    <div style={{maxWidth:480,margin:"0 auto",paddingTop:40,height:"100%",display:"flex",flexDirection:"column"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}><h2 style={{fontSize:18,fontWeight:900,color:"#d6d3d1"}}>🧠 Revisão Inteligente</h2><button onClick={onClose} style={{color:"#78716c",background:"transparent",border:"none",cursor:"pointer",fontSize:13}}>Sair</button></div>
-      <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
-        <div onClick={()=>setFlip(!flip)} style={{height:256,borderRadius:16,border:`2px solid ${flip?"#059669":"#3f3f46"}`,background:flip?"rgba(6,78,59,.2)":"#18181b",display:"flex",alignItems:"center",justifyContent:"center",padding:32,textAlign:"center",cursor:"pointer",position:"relative"}}>
-          <p style={{fontSize:18,fontWeight:700,color:"white",lineHeight:1.5}}>{flip?cur.back:cur.front}</p>
-          <p style={{position:"absolute",bottom:12,fontSize:11,fontWeight:700,textTransform:"uppercase",color:"#52525b"}}>{flip?"Resposta":"Toque para virar"}</p>
-        </div>
-      </div>
-      <p style={{textAlign:"center",fontSize:13,color:"#52525b",marginBottom:16}}>Card {idx+1} de {all.length}</p>
-      {flip?<div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:10}}>
-        {[["Errei","#7f1d1d","#f87171"],["Difícil","#78350f","#fb923c"],["Bom","#1e3a5f","#7dd3fc"],["Fácil","#14532d","#4ade80"]].map(([l,bg,c])=>(
-          <button key={l} onClick={()=>{setFlip(false);if(idx<all.length-1)setIdx(i=>i+1);else setDone(true);}} style={{padding:12,borderRadius:12,border:`1px solid ${bg}`,background:`${bg}80`,color:c,fontWeight:700,fontSize:13,cursor:"pointer"}}>{l}</button>
-        ))}
-      </div>:<p style={{textAlign:"center",color:"#52525b",fontSize:13}}>⏱ Toque para virar</p>}
-    </div>
-  );
-}
-
-// ── LESSON ──────────────────────────────────────────────────────────────────────
-const CAT_S={PREFLOP:{bg:"rgba(30,58,138,.4)",color:"#93c5fd"},POSTFLOP:{bg:"rgba(76,29,149,.4)",color:"#c4b5fd"},MATH:{bg:"rgba(6,78,59,.4)",color:"#6ee7b7"},MENTAL:{bg:"rgba(120,53,15,.4)",color:"#fcd34d"},ICM:{bg:"rgba(127,29,29,.4)",color:"#fca5a5"}};
-function LessonView({day,onBack,onCompleteDay,completedDays}){
-  const [stage,setStage]=useState("THEORY");const [score,setScore]=useState(0);const [missed,setMissed]=useState([]);
-  const tabs=[{id:"THEORY",label:"1. Teoria"},{id:"QUIZ",label:"2. Quiz"},{id:"SIMULATOR",label:"3. Simulação"}];
-  const order=["THEORY","QUIZ","SIMULATOR"];
+// ── LESSON VIEW ───────────────────────────────────────────────────────────────
+function LessonView({day,onBack,onCompleteDay,completedDays}) {
+  const [stage,setStage]=useState("THEORY");
+  const [score,setScore]=useState(0);
+  const [missed,setMissed]=useState([]);
+  const [celebrate,setCelebrate]=useState(false);
+  const STAGES=["THEORY","QUIZ","SIMULATOR"];
+  const stageIdx=STAGES.indexOf(stage);
+  const handleComplete=(dayId,s,m)=>{onCompleteDay(dayId,s,m);setCelebrate(true);};
+  if(celebrate) return <CelebrationScreen day={day} onContinue={()=>onBack()}/>;
   return(
     <div style={{height:"100%",display:"flex",flexDirection:"column"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",background:"#111412",borderBottom:"1px solid #27272a",flexShrink:0}}>
-        <div style={{display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={onBack} style={{background:"rgba(39,39,42,.5)",border:"none",color:"#a8a29e",cursor:"pointer",fontSize:16,padding:"4px 8px",borderRadius:8}}>←</button>
-          <div>
-            <p style={{fontWeight:700,color:"white",fontSize:13}}>Dia {day.day}: {day.title}</p>
-            <span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:999,background:(CAT_S[day.category]||{bg:"#27272a"}).bg,color:(CAT_S[day.category]||{color:"#a8a29e"}).color}}>{day.category}</span>
+      <div style={{flexShrink:0,background:T.surface,borderBottom:`1px solid ${T.border}`,padding:"10px 16px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10}}>
+          <button onClick={onBack} style={{background:"rgba(255,255,255,.04)",border:`1px solid ${T.border}`,color:T.textMid,cursor:"pointer",fontSize:14,padding:"5px 10px",borderRadius:8}}>←</button>
+          <div style={{flex:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:11,color:T.textSub,fontWeight:600}}>Dia {day.day}</span>
+              <CatBadge category={day.category} small/>
+            </div>
+            <p style={{fontWeight:700,color:T.text,fontSize:14,lineHeight:1.2,marginTop:2}}>{day.title}</p>
           </div>
         </div>
         <div style={{display:"flex",gap:6}}>
-          {tabs.map(t=>{const passed=order.indexOf(t.id)<order.indexOf(stage);return<button key={t.id} onClick={()=>setStage(t.id)} style={{padding:"4px 12px",borderRadius:999,fontSize:11,fontWeight:700,border:"none",cursor:"pointer",background:stage===t.id?"#d97706":passed?"#14532d":"#27272a",color:stage===t.id?"#0c0a09":passed?"#86efac":"#78716c"}}>{t.label}</button>;})}
+          {[["THEORY","Teoria"],["QUIZ","Quiz"],["SIMULATOR","Simulação"]].map(([id,label],i)=>{
+            const active=stage===id,done=stageIdx>i;
+            return(
+              <button key={id} onClick={()=>setStage(id)} style={{flex:1,display:"flex",flexDirection:"column",gap:4,background:"transparent",border:"none",cursor:"pointer",padding:0}}>
+                <div style={{height:3,borderRadius:999,background:done?"#059669":active?T.gold:"rgba(255,255,255,.08)",transition:"all .3s"}}/>
+                <span style={{fontSize:10,fontWeight:700,color:done?"#34d399":active?T.gold:T.textSub,textAlign:"center",letterSpacing:"0.04em"}}>{label}{done?" ✓":""}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
-      <div style={{flex:1,overflowY:"auto",padding:16}}>
+      <div style={{flex:1,overflowY:"auto",padding:"20px 16px"}}>
         {stage==="THEORY"&&<TheoryModule topic={day} onComplete={()=>setStage("QUIZ")}/>}
         {stage==="QUIZ"&&<QuizModule topic={day} onComplete={(s,m)=>{setScore(s);setMissed(m);setStage("SIMULATOR");}}/>}
-        {stage==="SIMULATOR"&&<SimulatorModule topic={day} completedDays={completedDays} onComplete={()=>onCompleteDay(day.day,score,missed)}/>}
+        {stage==="SIMULATOR"&&<SimulatorModule topic={day} completedDays={completedDays} onComplete={()=>handleComplete(day.day,score,missed)}/>}
       </div>
     </div>
   );
 }
 
-// ── DASHBOARD ───────────────────────────────────────────────────────────────────
-function Dashboard({userState,user,onSelectDay,onToggleComplete,onOpenFlashcards}){
-  const [exp,setExp]=useState(new Set([1]));
-  const toggle=w=>setExp(p=>{const n=new Set(p);n.has(w)?n.delete(w):n.add(w);return n;});
-  const pct=w=>{const t=getTopicsForWeek(w);return t.length?Math.round(t.filter(x=>userState.completedDays.includes(x.day)).length/t.length*100):0;};
-  const CAT={PREFLOP:{bg:"rgba(30,58,138,.3)",color:"#93c5fd",border:"rgba(30,58,138,.5)"},POSTFLOP:{bg:"rgba(76,29,149,.3)",color:"#c4b5fd",border:"rgba(76,29,149,.5)"},MATH:{bg:"rgba(6,78,59,.3)",color:"#6ee7b7",border:"rgba(6,78,59,.5)"},MENTAL:{bg:"rgba(120,53,15,.3)",color:"#fcd34d",border:"rgba(120,53,15,.5)"},ICM:{bg:"rgba(127,29,29,.3)",color:"#fca5a5",border:"rgba(127,29,29,.5)"}};
+// ── HOME SCREEN ───────────────────────────────────────────────────────────────
+function HomeScreen({userState,onSelectDay}) {
+  const done=userState.completedDays;
+  const nextDay=CURRICULUM.find(t=>!done.includes(t.day))||CURRICULUM[CURRICULUM.length-1];
+  const pct=Math.round(done.length/90*100);
+  const currentWeek=Math.ceil(nextDay.day/7);
+  const weekTopics=getTopicsForWeek(currentWeek);
+  const weekDone=weekTopics.filter(t=>done.includes(t.day)).length;
   return(
     <div style={{flex:1,overflowY:"auto"}}>
-      <div style={{maxWidth:900,margin:"0 auto",padding:16,paddingBottom:80}}>
-        {/* Banner */}
-        <div style={{marginBottom:20,borderRadius:16,border:"1px solid rgba(180,120,0,.35)",padding:"16px 20px",display:"flex",alignItems:"center",gap:16,background:"linear-gradient(120deg,#1a1200,#2a1a00,#1a1200)"}}>
-          {user&&user.photo?<img src={user.photo} style={{width:44,height:44,borderRadius:12,border:"2px solid rgba(245,158,11,.4)",flexShrink:0}} alt="av"/>
-            :<div style={{width:44,height:44,borderRadius:12,background:"linear-gradient(145deg,#c8a045,#8b6523)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,fontWeight:900,color:"#0c0a09",flexShrink:0}}>{user&&user.name?user.name[0].toUpperCase():"?"}</div>}
-          <div>
-            <p style={{fontSize:10,color:"#92400e",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Bem-vindo de volta</p>
-            <p style={{color:"white",fontWeight:900,fontSize:17}}>{user?user.name:""}</p>
+      <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px 100px"}}>
+        {/* Hero */}
+        <div style={{background:"linear-gradient(135deg,rgba(200,160,69,.12) 0%,rgba(200,160,69,.04) 100%)",border:"1px solid rgba(200,160,69,.2)",borderRadius:20,padding:24,marginBottom:16,position:"relative",overflow:"hidden"}}>
+          <div style={{position:"absolute",top:-20,right:-20,opacity:.06}}>
+            <ProgressArc value={done.length} total={90} size={160}/>
           </div>
-          <div style={{marginLeft:"auto",textAlign:"right"}}>
-            <p style={{fontSize:10,color:"#78716c",fontWeight:700,textTransform:"uppercase"}}>Jornada</p>
-            <p style={{color:"#fbbf24",fontWeight:900,fontSize:16}}>{userState.completedDays.length} <span style={{color:"#52525b",fontWeight:400,fontSize:13}}>/ 90 dias</span></p>
+          <p style={{fontSize:10,color:T.gold,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:12}}>Seu próximo passo</p>
+          <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,marginBottom:16}}>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <span style={{fontSize:12,color:T.textSub,fontWeight:600}}>Dia {nextDay.day}</span>
+                <CatBadge category={nextDay.category}/>
+              </div>
+              <h2 style={{fontSize:22,fontWeight:900,color:T.text,lineHeight:1.2}}>{nextDay.title}</h2>
+              <p style={{color:T.textSub,fontSize:13,marginTop:4,lineHeight:1.5}}>{nextDay.description}</p>
+            </div>
+            <div style={{flexShrink:0,position:"relative"}}>
+              <ProgressArc value={done.length} total={90} size={72}/>
+              <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+                <span style={{fontSize:16,fontWeight:900,color:T.text}}>{pct}%</span>
+              </div>
+            </div>
           </div>
+          <button onClick={()=>onSelectDay(nextDay)} style={{width:"100%",background:T.gold,color:"#0a0b0a",fontWeight:800,fontSize:14,padding:"14px",borderRadius:12,border:"none",cursor:"pointer"}}>
+            Começar Dia {nextDay.day} →
+          </button>
         </div>
         {/* Stats */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
-          {[[userState.completedDays.length+"/90","Dias Completos","#fbbf24"],["🔥 "+userState.streak,"Dias Seguidos","#fb923c"],[userState.customFlashcards.length,"Flashcards","#2dd4bf"]].map(([val,label,color],i)=>(
-            <div key={i} onClick={i===2?onOpenFlashcards:undefined} style={{background:"#18181b",border:"1px solid #27272a",borderRadius:12,padding:16,textAlign:"center",cursor:i===2?"pointer":"default"}}>
-              <div style={{fontSize:22,fontWeight:900,color}}>{val}</div>
-              <div style={{fontSize:11,color:"#78716c",fontWeight:700,textTransform:"uppercase",marginTop:4}}>{label}</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:16}}>
+          {[[done.length+"/90","Completos",T.gold],["🔥 "+userState.streak,"Sequência","#fb923c"],["Sem. "+currentWeek,`${weekDone}/${weekTopics.length} dias`,T.greenLight]].map(([val,label,color],i)=>(
+            <div key={i} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"14px 12px",textAlign:"center"}}>
+              <div style={{fontSize:18,fontWeight:900,color,lineHeight:1}}>{val}</div>
+              <div style={{fontSize:10,color:T.textSub,fontWeight:600,marginTop:5,textTransform:"uppercase",letterSpacing:"0.04em"}}>{label}</div>
             </div>
           ))}
         </div>
-        {/* Progress */}
-        <div style={{marginBottom:20}}>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#78716c",marginBottom:4}}><span style={{fontWeight:700,textTransform:"uppercase"}}>Progresso Geral</span><span>{Math.round(userState.completedDays.length/90*100)}%</span></div>
-          <div style={{height:6,background:"#18181b",borderRadius:999,overflow:"hidden"}}><div style={{height:"100%",background:"linear-gradient(90deg,#d97706,#f59e0b)",borderRadius:999,width:`${userState.completedDays.length/90*100}%`}}/></div>
-        </div>
-        {/* Curriculum */}
-        <div style={{display:"flex",flexDirection:"column",gap:10}}>
-          {ALL_WEEKS.map(week=>{
-            const topics=getTopicsForWeek(week),p=pct(week),isExp=exp.has(week);
+        {/* Semana atual */}
+        <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:16,overflow:"hidden"}}>
+          <div style={{padding:"14px 16px",borderBottom:`1px solid ${T.border}`}}>
+            <p style={{fontSize:11,color:T.textSub,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Semana {currentWeek} · {weekDone}/{weekTopics.length} concluídas</p>
+            <div style={{height:3,background:"rgba(255,255,255,.05)",borderRadius:999,marginTop:8,overflow:"hidden"}}>
+              <div style={{height:"100%",background:T.gold,borderRadius:999,width:`${weekDone/weekTopics.length*100}%`,transition:"width .6s"}}/>
+            </div>
+          </div>
+          {weekTopics.map(t=>{
+            const isDone=done.includes(t.day),isNext=t.day===nextDay.day;
             return(
-              <div key={week} style={{background:"#18181b",border:"1px solid #27272a",borderRadius:16,overflow:"hidden"}}>
-                <button onClick={()=>toggle(week)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",background:"transparent",border:"none",cursor:"pointer"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:12}}>
-                    <div style={{width:36,height:36,background:"#27272a",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:"#d6d3d1"}}>{week}</div>
-                    <div style={{textAlign:"left"}}>
-                      <div style={{fontWeight:700,color:"#f5f5f4",fontSize:13}}>Semana {week}</div>
-                      <div style={{fontSize:11,color:"#78716c"}}>{topics.length} aulas · {p}% concluído</div>
-                    </div>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:80,height:5,background:"#27272a",borderRadius:999,overflow:"hidden"}}><div style={{height:"100%",background:"#d97706",borderRadius:999,width:`${p}%`}}/></div>
-                    <span style={{color:"#52525b",fontSize:11}}>{isExp?"▲":"▼"}</span>
-                  </div>
-                </button>
-                {isExp&&<div style={{borderTop:"1px solid #27272a"}}>
-                  {topics.map(t=>{
-                    const done=userState.completedDays.includes(t.day);
-                    const cs=CAT[t.category]||{bg:"rgba(39,39,42,.3)",color:"#a8a29e",border:"rgba(39,39,42,.5)"};
-                    return(
-                      <div key={t.day} onClick={()=>onSelectDay(t)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 16px",cursor:"pointer",borderBottom:"1px solid rgba(39,39,42,.4)",background:done?"rgba(6,78,59,.15)":"transparent"}}>
-                        <div style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:900,background:done?"#059669":"#27272a",color:done?"white":"#78716c",flexShrink:0}}>{done?"✓":t.day}</div>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontWeight:600,fontSize:13,color:done?"#6ee7b7":"#f5f5f4",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</div>
-                          <div style={{fontSize:11,color:"#78716c",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.description}</div>
-                        </div>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                          <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:6,background:cs.bg,color:cs.color,border:`1px solid ${cs.border}`}}>{t.category}</span>
-                          <button onClick={e=>{e.stopPropagation();onToggleComplete(t.day);}} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:16,color:done?"#059669":"#52525b",padding:"2px 4px"}}>{done?"☑":"☐"}</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>}
+              <div key={t.day} onClick={()=>onSelectDay(t)} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderBottom:`1px solid ${T.border}`,cursor:"pointer",background:isNext?"rgba(200,160,69,.04)":"transparent"}}>
+                <div style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,background:isDone?"rgba(5,150,105,.2)":isNext?"rgba(200,160,69,.15)":"rgba(255,255,255,.04)",color:isDone?"#34d399":isNext?T.gold:T.textSub,border:`1px solid ${isDone?"rgba(52,211,153,.2)":isNext?"rgba(200,160,69,.2)":"rgba(255,255,255,.06)"}`,flexShrink:0}}>
+                  {isDone?"✓":t.day}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <p style={{fontWeight:600,fontSize:13,color:isDone?T.textSub:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</p>
+                  <p style={{fontSize:11,color:T.textSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.description}</p>
+                </div>
+                <CatBadge category={t.category} small/>
               </div>
             );
           })}
@@ -713,42 +808,172 @@ function Dashboard({userState,user,onSelectDay,onToggleComplete,onOpenFlashcards
   );
 }
 
-// ── LOGIN ───────────────────────────────────────────────────────────────────────
-function LoginScreen({onLogin}){
+// ── CURRICULUM SCREEN ─────────────────────────────────────────────────────────
+function CurriculumScreen({userState,onSelectDay,onToggleComplete}) {
+  const [exp,setExp]=useState(new Set([1]));
+  const toggle=w=>setExp(p=>{const n=new Set(p);n.has(w)?n.delete(w):n.add(w);return n;});
+  const pct=w=>{const t=getTopicsForWeek(w);return t.length?Math.round(t.filter(x=>userState.completedDays.includes(x.day)).length/t.length*100):0;};
+  return(
+    <div style={{flex:1,overflowY:"auto"}}>
+      <div style={{maxWidth:640,margin:"0 auto",padding:"16px 16px 100px"}}>
+        <div style={{marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.textSub,marginBottom:6}}>
+            <span style={{fontWeight:700,textTransform:"uppercase",letterSpacing:"0.05em"}}>Progresso total</span>
+            <span style={{color:T.text,fontWeight:700}}>{userState.completedDays.length} / 90 dias</span>
+          </div>
+          <div style={{height:5,background:"rgba(255,255,255,.05)",borderRadius:999,overflow:"hidden"}}>
+            <div style={{height:"100%",background:`linear-gradient(90deg,${T.gold},#f59e0b)`,borderRadius:999,width:`${userState.completedDays.length/90*100}%`,transition:"width .6s"}}/>
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {ALL_WEEKS.map(week=>{
+            const topics=getTopicsForWeek(week),p=pct(week),isExp=exp.has(week);
+            return(
+              <div key={week} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:14,overflow:"hidden"}}>
+                <button onClick={()=>toggle(week)} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 16px",background:"transparent",border:"none",cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <div style={{width:34,height:34,background:"rgba(255,255,255,.04)",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:900,fontSize:13,color:p===100?T.greenLight:T.textMid,border:`1px solid ${p===100?"rgba(52,211,153,.2)":T.border}`}}>{p===100?"✓":week}</div>
+                    <div style={{textAlign:"left"}}>
+                      <div style={{fontWeight:700,color:T.text,fontSize:13}}>Semana {week}</div>
+                      <div style={{fontSize:11,color:T.textSub}}>{topics.length} aulas · {p}% completo</div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:10}}>
+                    <div style={{width:60,height:3,background:"rgba(255,255,255,.06)",borderRadius:999,overflow:"hidden"}}><div style={{height:"100%",background:p===100?"#059669":T.gold,borderRadius:999,width:`${p}%`}}/></div>
+                    <span style={{color:T.textSub,fontSize:11}}>{isExp?"▲":"▼"}</span>
+                  </div>
+                </button>
+                {isExp&&(
+                  <div style={{borderTop:`1px solid ${T.border}`}}>
+                    {topics.map(t=>{
+                      const isDone=userState.completedDays.includes(t.day);
+                      return(
+                        <div key={t.day} onClick={()=>onSelectDay(t)} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:"1px solid rgba(255,255,255,.03)",cursor:"pointer",background:isDone?"rgba(5,150,105,.04)":"transparent"}}>
+                          <div style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,background:isDone?"rgba(5,150,105,.2)":"rgba(255,255,255,.04)",color:isDone?"#34d399":T.textSub,border:`1px solid ${isDone?"rgba(52,211,153,.2)":"rgba(255,255,255,.06)"}`,flexShrink:0}}>{isDone?"✓":t.day}</div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <p style={{fontWeight:600,fontSize:13,color:isDone?T.textSub:T.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.title}</p>
+                            <p style={{fontSize:11,color:T.textSub,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.description}</p>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                            <CatBadge category={t.category} small/>
+                            <button onClick={e=>{e.stopPropagation();onToggleComplete(t.day);}} style={{background:"transparent",border:"none",cursor:"pointer",fontSize:15,color:isDone?"#34d399":T.textSub,padding:"2px 4px"}}>{isDone?"☑":"☐"}</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── FLASHCARDS ────────────────────────────────────────────────────────────────
+function FlashcardsScreen({cards}) {
+  const [idx,setIdx]=useState(0);const [flip,setFlip]=useState(false);const [done,setDone]=useState(false);
+  const all=cards.length>0?cards:[
+    {id:"1",front:"O que é Pot Odds?",back:"Relação entre pote e custo de call. Pote 100, call 20 = odds 5:1."},
+    {id:"2",front:"Quando usar C-Bet?",back:"Com range advantage, board favorável ou vilão fraco."},
+    {id:"3",front:"O que é ICM?",back:"Converte fichas de torneio em valor monetário real."},
+  ];
+  const cur=all[idx];
+  if(done) return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",flex:1,gap:20,textAlign:"center",padding:24}}>
+      <div style={{fontSize:52}}>✓</div>
+      <h2 style={{fontSize:24,fontWeight:900,color:T.text}}>Sessão Completa</h2>
+      <p style={{color:T.textSub}}>Você revisou {all.length} cards.</p>
+      <button onClick={()=>{setDone(false);setIdx(0);setFlip(false);}} style={{background:T.gold,color:"#0a0b0a",padding:"12px 28px",borderRadius:12,border:"none",cursor:"pointer",fontWeight:700}}>Recomeçar</button>
+    </div>
+  );
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:"column",padding:"20px 16px 100px",maxWidth:480,margin:"0 auto",width:"100%"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+        <h2 style={{fontSize:16,fontWeight:800,color:T.text}}>🧠 Revisão</h2>
+        <span style={{fontSize:12,color:T.textSub}}>{idx+1}/{all.length}</span>
+      </div>
+      <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+        <div onClick={()=>setFlip(!flip)} style={{minHeight:200,borderRadius:18,border:`1px solid ${flip?"rgba(52,211,153,.25)":T.border}`,background:T.card,display:"flex",alignItems:"center",justifyContent:"center",padding:28,textAlign:"center",cursor:"pointer",position:"relative",transition:"border-color .2s"}}>
+          {flip&&<span style={{position:"absolute",top:14,left:50,right:50,fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em",color:T.greenLight}}>Resposta</span>}
+          <p style={{fontSize:17,fontWeight:flip?500:700,color:flip?T.textMid:T.text,lineHeight:1.55}}>{flip?cur.back:cur.front}</p>
+          {!flip&&<span style={{position:"absolute",bottom:14,fontSize:10,color:T.textSub}}>Toque para revelar</span>}
+        </div>
+      </div>
+      <div style={{height:56,marginTop:16}}>
+        {flip?(
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+            {[["Errei","#7f1d1d","#f87171"],["Difícil","#78350f","#fb923c"],["Bom","#1e3a5f","#7dd3fc"],["Fácil","#14532d","#4ade80"]].map(([l,bg,c])=>(
+              <button key={l} onClick={()=>{setFlip(false);if(idx<all.length-1)setIdx(i=>i+1);else setDone(true);}} style={{padding:"10px 4px",borderRadius:10,border:`1px solid ${bg}`,background:`${bg}60`,color:c,fontWeight:700,fontSize:12,cursor:"pointer"}}>{l}</button>
+            ))}
+          </div>
+        ):(
+          <div style={{display:"flex",justifyContent:"center"}}>
+            <button onClick={()=>setFlip(true)} style={{background:T.gold,color:"#0a0b0a",fontWeight:800,fontSize:14,padding:"12px 32px",borderRadius:12,border:"none",cursor:"pointer"}}>Revelar</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── BOTTOM NAV ────────────────────────────────────────────────────────────────
+function BottomNav({active,onChange}) {
+  const items=[{id:"HOME",icon:"⬡",label:"Início"},{id:"CURRICULUM",icon:"☰",label:"Currículo"},{id:"FLASHCARDS",icon:"◈",label:"Revisão"}];
+  return(
+    <div style={{position:"fixed",bottom:0,left:0,right:0,background:T.surface,borderTop:`1px solid ${T.border}`,display:"flex",justifyContent:"space-around",padding:"8px 0 max(12px, env(safe-area-inset-bottom))",zIndex:50}}>
+      {items.map(item=>{
+        const act=active===item.id;
+        return(
+          <button key={item.id} onClick={()=>onChange(item.id)} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,background:"transparent",border:"none",cursor:"pointer",padding:"4px 20px",minWidth:64,minHeight:44}}>
+            <span style={{fontSize:18,lineHeight:1,filter:act?"none":"opacity(0.4)",transition:"filter .2s"}}>{item.icon}</span>
+            <span style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em",color:act?T.gold:T.textSub,transition:"color .2s"}}>{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function LoginScreen({onLogin}) {
   const [loading,setLoading]=useState(false);
   const [error,setError]=useState("");
   const handleGoogle=async()=>{
     setLoading(true);setError("");
     try{
       const provider=new firebase.auth.GoogleAuthProvider();
-      const result=await auth.signInWithPopup(provider);
+      const result=await fbAuth.signInWithPopup(provider);
       const u=result.user;
       onLogin({id:u.uid,name:u.displayName||u.email,email:u.email,photo:u.photoURL});
-    }catch(e){setError("Erro ao fazer login. Tente novamente: "+e.message);setLoading(false);}
+    }catch(e){setError("Erro: "+e.message);setLoading(false);}
   };
   return(
-    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"radial-gradient(160deg at 20% 20%,#0e1f14,#0a0c0b,#0d0f0e)"}}>
-      <div style={{background:"rgba(24,24,27,.95)",border:"1px solid #27272a",borderRadius:20,boxShadow:"0 25px 60px rgba(0,0,0,.5)",width:"100%",maxWidth:360,padding:32,textAlign:"center"}}>
-        <div style={{width:64,height:64,margin:"0 auto 20px",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:28,fontWeight:900,color:"#0c0a09",background:"linear-gradient(145deg,#c8a045,#8b6523,#5c3f14)"}}>90</div>
-        <h1 style={{fontSize:22,fontWeight:900,color:"white",marginBottom:4}}>Poker Coach IA</h1>
-        <p style={{color:"#78716c",fontSize:13,marginBottom:32}}>Faça login para salvar seu progresso</p>
-        <button onClick={handleGoogle} disabled={loading} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:12,background:"white",color:"#1f2937",fontWeight:700,fontSize:14,padding:"13px 20px",borderRadius:12,border:"none",cursor:loading?"not-allowed":"pointer",opacity:loading?0.7:1}}>
-          {loading?<Spinner size={20} color="#9ca3af"/>:<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>}
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 30% 20%,rgba(200,160,69,.08) 0%,${T.bg} 60%)`,padding:20}}>
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:20,width:"100%",maxWidth:360,padding:32,textAlign:"center"}}>
+        <div style={{width:64,height:64,margin:"0 auto 20px",borderRadius:16,display:"flex",alignItems:"center",justifyContent:"center",fontSize:26,fontWeight:900,color:"#0a0b0a",background:`linear-gradient(145deg,${T.gold},#8b6523)`}}>90</div>
+        <h1 style={{fontSize:22,fontWeight:900,color:T.text,marginBottom:4}}>Poker Coach IA</h1>
+        <p style={{color:T.textSub,fontSize:13,marginBottom:28}}>90 dias para dominar o NL Hold'em</p>
+        <button onClick={handleGoogle} disabled={loading} style={{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:12,background:"white",color:"#1f2937",fontWeight:700,fontSize:14,padding:"13px 20px",borderRadius:12,border:"none",cursor:loading?"not-allowed":"pointer",opacity:loading?0.7:1,marginBottom:12}}>
+          {loading?<div style={{width:20,height:20,border:"2px solid #9ca3af",borderTopColor:"transparent",borderRadius:"50%",animation:"_spin .9s linear infinite"}}/>:<svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>}
           {loading?"Entrando...":"Continuar com Google"}
         </button>
-        {error&&<p style={{color:"#f87171",fontSize:12,marginTop:12}}>{error}</p>}
-        <p style={{fontSize:11,color:"#3f3f46",marginTop:20}}>Progresso salvo no Firebase 🔥</p>
+        {error&&<p style={{color:"#f87171",fontSize:12,marginBottom:12}}>{error}</p>}
+        <p style={{fontSize:11,color:"rgba(255,255,255,.15)"}}>Progresso salvo no Firebase 🔥</p>
       </div>
     </div>
   );
 }
 
-// ── MAIN APP ────────────────────────────────────────────────────────────────────
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
 const INITIAL_STATE={completedDays:[],customFlashcards:[],quizScores:{},streak:0};
 
-function App(){
+function App() {
   const [user,setUser]=useState(null);
-  const [view,setView]=useState("LOADING");
+  const [mainView,setMainView]=useState("LOADING");
+  const [tab,setTab]=useState("HOME");
   const [activeDay,setActiveDay]=useState(null);
   const [userState,setUserState]=useState(INITIAL_STATE);
   const [syncStatus,setSyncStatus]=useState("idle");
@@ -756,56 +981,68 @@ function App(){
   const firstLoad=useRef(true);
 
   useEffect(()=>{
-    auth.onAuthStateChanged(async fbUser=>{
+    fbAuth.onAuthStateChanged(async fbUser=>{
       if(fbUser){
         const u={id:fbUser.uid,name:fbUser.displayName||fbUser.email,email:fbUser.email,photo:fbUser.photoURL};
         setUser(u);
         const data=await fbLoad(fbUser.uid);
         setUserState(data||INITIAL_STATE);
-        setView("DASHBOARD");
-      }else{setUser(null);setView("LOGIN");setUserState(INITIAL_STATE);}
+        setMainView("APP");
+      }else{setUser(null);setMainView("LOGIN");}
     });
   },[]);
 
   useEffect(()=>{
-    if(!user||view==="LOADING")return;
+    if(!user||mainView!=="APP")return;
     if(firstLoad.current){firstLoad.current=false;return;}
     setSyncStatus("saving");
     clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{const ok=await fbSave(user.id,userState);setSyncStatus(ok?"saved":"error");setTimeout(()=>setSyncStatus("idle"),2000);},800);
-  },[userState,user,view]);
+  },[userState,user,mainView]);
 
-  const handleLogout=()=>auth.signOut();
+  const handleLogout=()=>fbAuth.signOut();
   const toggleComplete=dayId=>setUserState(p=>({...p,completedDays:p.completedDays.includes(dayId)?p.completedDays.filter(d=>d!==dayId):[...p.completedDays,dayId]}));
-  const completeDay=(dayId,score)=>{setUserState(p=>({...p,completedDays:p.completedDays.includes(dayId)?p.completedDays:[...p.completedDays,dayId],quizScores:{...p.quizScores,[dayId]:score},streak:p.completedDays.includes(dayId)?p.streak:p.streak+1}));setView("DASHBOARD");setActiveDay(null);};
+  const completeDay=(dayId,score)=>{setUserState(p=>({...p,completedDays:p.completedDays.includes(dayId)?p.completedDays:[...p.completedDays,dayId],quizScores:{...p.quizScores,[dayId]:score},streak:p.completedDays.includes(dayId)?p.streak:p.streak+1}));setActiveDay(null);};
 
-  if(view==="LOADING") return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0d0f0e",flexDirection:"column",gap:16}}><Spinner/><p style={{color:"#78716c",fontSize:13}}>Carregando...</p></div>;
-  if(view==="LOGIN") return <LoginScreen onLogin={u=>{setUser(u);}}/>;
+  if(mainView==="LOADING") return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:T.bg,flexDirection:"column",gap:14}}>
+      <Spinner size={36}/><p style={{color:T.textSub,fontSize:13}}>Carregando...</p>
+    </div>
+  );
+  if(mainView==="LOGIN") return <LoginScreen onLogin={u=>setUser(u)}/>;
+
+  if(activeDay) return(
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden",background:T.bg}}>
+      <LessonView day={activeDay} completedDays={userState.completedDays} onBack={()=>setActiveDay(null)} onCompleteDay={completeDay}/>
+    </div>
+  );
 
   return(
-    <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden",background:"#0d0f0e",fontFamily:"system-ui,sans-serif"}}>
-      <nav style={{height:56,flexShrink:0,borderBottom:"1px solid rgba(39,39,42,.8)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",background:"#111412"}}>
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",overflow:"hidden",background:T.bg}}>
+      {/* Top bar */}
+      <div style={{height:52,flexShrink:0,borderBottom:`1px solid ${T.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 16px",background:T.surface}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <div style={{width:32,height:32,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:900,color:"#0c0a09",background:"linear-gradient(145deg,#c8a045,#8b6523,#5c3f14)"}}>90</div>
-          <span style={{fontWeight:900,fontSize:15}}>Poker Coach IA</span>
+          <div style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:"#0a0b0a",background:`linear-gradient(145deg,${T.gold},#8b6523)`}}>90</div>
+          <span style={{fontWeight:800,fontSize:14,color:T.text,letterSpacing:"-0.01em"}}>Poker Coach</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
-          {view==="LESSON"&&<button onClick={()=>{setView("DASHBOARD");setActiveDay(null);}} style={{fontSize:11,color:"#a8a29e",background:"transparent",border:"1px solid #27272a",padding:"4px 12px",borderRadius:8,cursor:"pointer"}}>← Dashboard</button>}
-          {view==="FLASHCARDS"&&<button onClick={()=>setView("DASHBOARD")} style={{fontSize:11,color:"#a8a29e",background:"transparent",border:"1px solid #27272a",padding:"4px 12px",borderRadius:8,cursor:"pointer"}}>← Dashboard</button>}
-          {syncStatus==="saving"&&<span style={{fontSize:11,color:"#f59e0b",display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:"50%",background:"#d97706",display:"inline-block"}}/>🔥 Salvando...</span>}
-          {syncStatus==="saved"&&<span style={{fontSize:11,color:"#34d399",display:"flex",alignItems:"center",gap:4}}><span style={{width:6,height:6,borderRadius:"50%",background:"#34d399",display:"inline-block"}}/>🔥 Salvo</span>}
-          {user&&user.photo?<img src={user.photo} style={{width:28,height:28,borderRadius:"50%",border:"1px solid #3f3f46"}} alt="av"/>:<div style={{width:28,height:28,borderRadius:"50%",background:"#d97706",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:"#0c0a09"}}>{user&&user.name?user.name[0].toUpperCase():"?"}</div>}
-          <button onClick={handleLogout} style={{background:"transparent",border:"none",color:"#52525b",cursor:"pointer",fontSize:14,padding:4}}>⏻</button>
+          {syncStatus==="saving"&&<span style={{fontSize:10,color:T.gold,opacity:.7}}>☁️</span>}
+          {syncStatus==="saved"&&<span style={{fontSize:10,color:T.greenLight,opacity:.7}}>✓ salvo</span>}
+          {user&&user.photo
+            ?<img src={user.photo} style={{width:28,height:28,borderRadius:"50%",border:`1px solid ${T.border}`}} alt="av"/>
+            :<div style={{width:28,height:28,borderRadius:"50%",background:`linear-gradient(135deg,${T.gold},#8b6523)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:900,color:"#0a0b0a"}}>{user&&user.name?user.name[0].toUpperCase():"?"}</div>
+          }
+          <button onClick={handleLogout} style={{background:"transparent",border:"none",color:T.textSub,cursor:"pointer",fontSize:13,padding:4,opacity:.6}}>⏻</button>
         </div>
-      </nav>
-      {view==="DASHBOARD"&&<div style={{display:"flex",gap:4,padding:"6px 12px",borderBottom:"1px solid rgba(39,39,42,.5)",background:"#111412",flexShrink:0}}>
-        {[["DASHBOARD","📚 Currículo"],["FLASHCARDS","🧠 Revisão"]].map(([v,l])=><button key={v} onClick={()=>setView(v)} style={{padding:"5px 14px",borderRadius:8,fontSize:11,fontWeight:700,border:"none",cursor:"pointer",background:view===v?"#27272a":"transparent",color:view===v?"white":"#78716c"}}>{l}</button>)}
-      </div>}
+      </div>
+
       <main style={{flex:1,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-        {view==="DASHBOARD"&&<Dashboard userState={userState} user={user} onSelectDay={d=>{setActiveDay(d);setView("LESSON");}} onToggleComplete={toggleComplete} onOpenFlashcards={()=>setView("FLASHCARDS")}/>}
-        {view==="LESSON"&&activeDay&&<LessonView day={activeDay} completedDays={userState.completedDays} onBack={()=>{setView("DASHBOARD");setActiveDay(null);}} onCompleteDay={completeDay}/>}
-        {view==="FLASHCARDS"&&<FlashcardsView cards={userState.customFlashcards} onClose={()=>setView("DASHBOARD")}/>}
+        {tab==="HOME"&&<HomeScreen userState={userState} onSelectDay={d=>setActiveDay(d)}/>}
+        {tab==="CURRICULUM"&&<CurriculumScreen userState={userState} onSelectDay={d=>setActiveDay(d)} onToggleComplete={toggleComplete}/>}
+        {tab==="FLASHCARDS"&&<FlashcardsScreen cards={userState.customFlashcards}/>}
       </main>
+
+      <BottomNav active={tab} onChange={setTab}/>
     </div>
   );
 }

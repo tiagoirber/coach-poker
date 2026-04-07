@@ -299,7 +299,7 @@ function ProgressArc({value,total,size=80}) {
 
 // ── API HELPERS ───────────────────────────────────────────────────────────────
 // ⚠️ SUBSTITUA pela sua chave em: https://console.anthropic.com
-const ANTHROPIC_KEY = "COLOQUE_SUA_CHAVE_AQUI";
+const ANTHROPIC_KEY = "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";
 
 async function callClaudeJSON(sys,prompt,maxTokens=1200) {
   const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":ANTHROPIC_KEY,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:maxTokens,system:sys,messages:[{role:"user",content:prompt}]})});

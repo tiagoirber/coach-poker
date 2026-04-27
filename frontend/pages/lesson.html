@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lição — Poker Coach IA</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { colors: {
+        poker: { bg:'#0a0b0a', surface:'#111412', card:'#161a16', gold:'#c8a045' }
+      }}}
+    }
+  </script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="../css/glass.css">
+  <style>
+    @keyframes rise { from{transform:translateY(20px);opacity:0} to{transform:translateY(0);opacity:1} }
+    .rise { animation: rise .4s ease forwards; }
+    @keyframes pulse-gold { 0%,100%{box-shadow:0 0 0 0 rgba(200,160,69,0)} 50%{box-shadow:0 0 0 6px rgba(200,160,69,0.15)} }
+    .pulse-gold { animation: pulse-gold 2s infinite; }
+    @keyframes celebrate { 0%{transform:scale(0.5);opacity:0} 60%{transform:scale(1.1)} 100%{transform:scale(1);opacity:1} }
+    .celebrate { animation: celebrate .6s ease forwards; }
+    @keyframes confetti-fall { to { transform: translateY(110vh) rotate(720deg); opacity:0; } }
+
+    /* Poker Cards */
+    .pcard {
+      display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
+      width:40px; height:56px; background:white; border-radius:5px;
+      border:1.5px solid #e5e7eb; box-shadow:0 3px 8px rgba(0,0,0,0.5);
+      position:relative; font-family:Georgia,serif; flex-shrink:0; user-select:none;
+    }
+    .pcard .r { position:absolute; top:3px; left:5px; font-size:11px; font-weight:900; line-height:1; }
+    .pcard .rb { position:absolute; bottom:3px; right:5px; font-size:11px; font-weight:900; line-height:1; transform:rotate(180deg); }
+    .pcard .s { font-size:18px; line-height:1; }
+    .pcard.red { color:#dc2626; }
+    .pcard.blk { color:#1e293b; }
+    .pcard-back { width:40px;height:56px;border-radius:5px;background:linear-gradient(135deg,#1e3a5f,#1e3a5f);border:2px solid #3b82f6;box-shadow:0 3px 8px rgba(0,0,0,0.5);flex-shrink:0; }
+
+    /* Glossary tooltips */
+    .gl-term {
+      border-bottom:1px dashed rgba(200,160,69,0.5); color:#c8a045; cursor:help; position:relative;
+    }
+    .gl-term::after {
+      content: attr(data-tip);
+      position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
+      background:#1a1a2a; color:#e5e7eb; font-size:11px; padding:6px 10px; border-radius:6px;
+      white-space:normal; width:220px; text-align:left; line-height:1.4;
+      border:1px solid rgba(200,160,69,0.3); pointer-events:none;
+      opacity:0; transition:opacity .2s; z-index:100;
+    }
+    .gl-term:hover::after, .gl-term:focus::after { opacity:1; }
+
+    /* Action buttons */
+    .act-btn { border-radius:8px; padding:10px 14px; font-size:13px; font-weight:700; border:2px solid; transition:all .15s; cursor:pointer; }
+    .act-btn:hover { transform:translateY(-1px); }
+    .act-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+    .act-fold  { background:rgba(239,68,68,0.1);  border-color:rgba(239,68,68,0.3);  color:#f87171; }
+    .act-fold:hover  { background:rgba(239,68,68,0.2); }
+    .act-check { background:rgba(156,163,175,0.1); border-color:rgba(156,163,175,0.3); color:#9ca3af; }
+    .act-check:hover { background:rgba(156,163,175,0.2); }
+    .act-call  { background:rgba(59,130,246,0.1);  border-color:rgba(59,130,246,0.3);  color:#60a5fa; }
+    .act-call:hover  { background:rgba(59,130,246,0.2); }
+    .act-bet   { background:rgba(52,211,153,0.1);  border-color:rgba(52,211,153,0.3);  color:#34d399; }
+    .act-bet:hover   { background:rgba(52,211,153,0.2); }
+    .act-raise { background:rgba(251,191,36,0.1);  border-color:rgba(251,191,36,0.3);  color:#fbbf24; }
+    .act-raise:hover { background:rgba(251,191,36,0.2); }
+    .act-allin { background:rgba(168,85,247,0.1);  border-color:rgba(168,85,247,0.3);  color:#a78bfa; }
+    .act-allin:hover { background:rgba(168,85,247,0.2); }
+
+    /* Analysis tabs */
+    .ana-tab { padding:6px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; }
+    .ana-tab.active { background:rgba(200,160,69,0.2); border-color:rgba(200,160,69,0.4); color:#c8a045; }
+    .ana-tab:not(.active) { color:#6b7280; }
+    .ana-tab:not(.active):hover { color:#9ca3af; }
+
+    /* Feynman */
+    .feynman-ta {
+      width:100%; background:#0d0f0d; border:1px solid rgba(255,255,255,0.08); border-radius:8px;
+      color:#e5e7eb; padding:12px; font-size:13px; resize:vertical; min-height:80px;
+      outline:none; font-family:inherit; line-height:1.5;
+    }
+    .feynman-ta:focus { border-color:rgba(200,160,69,0.4); }
+    .feynman-ta.valid { border-color:rgba(52,211,153,0.4); }
+
+    /* Streets timeline */
+    .street-item { position:relative; padding-left:20px; }
+    .street-item::before { content:''; position:absolute; left:6px; top:20px; bottom:0; width:1px; background:rgba(255,255,255,0.1); }
+    .street-item:last-child::before { display:none; }
+
+    /* Bottom nav */
+    .bot-nav-btn { display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 16px; color:#6b7280; font-size:11px; font-weight:600; text-decoration:none; transition:color .15s; border-top:2px solid transparent; }
+    .bot-nav-btn.active, .bot-nav-btn:hover { color:#c8a045; border-top-color:#c8a045; }
+  </style>
+</head>
+
+<body class="min-h-screen text-white pb-20" style="background:#0a0b0a;">
+
+  <!-- Navbar -->
+  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
+    <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <a href="/frontend/pages/dashboard.html" class="text-gray-400 hover:text-white transition-colors text-sm">← Dashboard</a>
+        <span class="text-white/20">|</span>
+        <span id="nav-lesson-title" class="text-sm text-gray-300 truncate max-w-xs"></span>
+      </div>
+    </div>
+  </nav>
+
+  <main class="max-w-4xl mx-auto px-4 py-8">
+
+    <!-- Header -->
+    <header class="mb-8 rise">
+      <div class="flex items-center gap-3 mb-3 flex-wrap">
+        <span id="lesson-day-badge" class="text-xs font-bold px-3 py-1 rounded-full"
+              style="background:rgba(200,160,69,0.15); color:#c8a045;"></span>
+        <span id="lesson-category-badge" class="text-xs font-bold px-3 py-1 rounded-full"></span>
+        <span id="already-done-badge" class="hidden text-xs font-bold px-3 py-1 rounded-full"
+              style="background:rgba(5,150,105,0.15); color:#34d399;">✅ Concluída</span>
+      </div>
+      <h1 id="lesson-title" class="text-3xl font-bold mb-2">Carregando...</h1>
+      <p id="lesson-description" class="text-gray-400"></p>
+    </header>
+
+    <!-- Loading -->
+    <div id="loading-state" class="text-center py-20">
+      <div class="inline-block w-10 h-10 border-2 border-yellow-500/20 border-t-yellow-500 rounded-full animate-spin mb-4"></div>
+      <p class="text-gray-400">Gerando sua lição com IA...</p>
+      <p class="text-gray-600 text-sm mt-1">Isso pode levar alguns segundos</p>
+    </div>
+
+    <!-- Conteúdo principal -->
+    <div id="lesson-content" class="hidden space-y-6">
+
+      <!-- ── 1. TEORIA ── -->
+      <section class="rounded-xl p-6 rise gp" style="border:1px solid rgba(255,255,255,0.06);">
+        <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
+          <span class="text-xl">📖</span> Teoria
+        </h2>
+        <div id="theory-text" class="text-gray-300 leading-relaxed space-y-3 text-sm"></div>
+        <div class="mt-5 pt-5 border-t border-white/5">
+          <p class="text-xs font-semibold uppercase tracking-wider mb-3" style="color:#c8a045;">⚡ Pontos-chave</p>
+          <ul id="key-points" class="space-y-2"></ul>
+        </div>
+      </section>
+
+      <!-- ── 2. FEYNMAN ── -->
+      <section id="feynman-section" class="rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
+        <h2 class="text-lg font-bold mb-1 flex items-center gap-2 text-blue-300">
+          <span>🧬</span> Consolidação Feynman
+        </h2>
+        <p class="text-xs text-gray-400 mb-4">Explique o conceito com suas próprias palavras para fixar o aprendizado.</p>
+        <div class="space-y-4">
+          <div>
+            <label class="text-xs font-semibold text-blue-400 block mb-1">1. Explique o conceito em suas palavras</label>
+            <textarea id="feynman-1" class="feynman-ta" placeholder="Ex: Pot odds é a relação entre o que preciso pagar e o que posso ganhar..."></textarea>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-blue-400 block mb-1">2. Crie um exemplo pessoal de uso</label>
+            <textarea id="feynman-2" class="feynman-ta" placeholder="Ex: Estou no BTN com 9-8 suited, o pote é 20bb e o oponente aposta 8bb..."></textarea>
+          </div>
+          <button id="feynman-btn" onclick="submitFeynman()"
+                  class="w-full py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+                  style="background:rgba(147,197,253,0.15); border:1px solid rgba(147,197,253,0.3); color:#93c5fd;">
+            Continuar para o Quiz →
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 3. QUIZ ── -->
+      <section id="quiz-section" class="rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06); position:relative;">
+        <!-- Lock overlay (shown until Feynman done) -->
+        <div id="quiz-lock" class="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-xl"
+             style="background:rgba(10,11,10,0.85); backdrop-filter:blur(4px);">
+          <span class="text-3xl mb-3">🔒</span>
+          <p class="text-sm text-gray-400 text-center px-8">Complete a consolidação Feynman acima para desbloquear o quiz.</p>
+        </div>
+        <div class="px-6 py-4 flex items-center justify-between" style="background:#161a16;">
+          <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
+          <div class="flex rounded-lg overflow-hidden text-xs font-semibold" style="border:1px solid rgba(255,255,255,0.08);">
+            <button onclick="setQuizLevel('easy')"   id="quiz-tab-easy"
+                    class="px-3 py-1.5 transition-colors" style="background:#34d399;color:#000;">Fácil</button>
+            <button onclick="setQuizLevel('medium')" id="quiz-tab-medium"
+                    class="px-3 py-1.5 transition-colors" style="color:#6b7280;">Médio</button>
+            <button onclick="setQuizLevel('hard')"   id="quiz-tab-hard"
+                    class="px-3 py-1.5 transition-colors" style="color:#6b7280;">Difícil</button>
+          </div>
+        </div>
+        <div class="p-6 space-y-4" style="background:#111412;">
+          <div id="quiz-easy"   class="space-y-4"></div>
+          <div id="quiz-medium" class="space-y-4 hidden"></div>
+          <div id="quiz-hard"   class="space-y-4 hidden"></div>
+        </div>
+      </section>
+
+      <!-- ── 4. SIMULAÇÃO DE MÃOS ── -->
+      <section class="rounded-xl overflow-hidden rise gp-green" style="border:1px solid rgba(52,211,153,0.15);">
+        <div class="px-6 py-4 flex items-center justify-between" style="background:rgba(5,150,105,0.1);">
+          <h2 class="text-lg font-bold flex items-center gap-2 text-green-400"><span>🎯</span> Simulação de Mãos</h2>
+          <div class="flex rounded-lg overflow-hidden text-xs font-semibold" style="border:1px solid rgba(52,211,153,0.2);">
+            <button onclick="setSimLevel('easy')"   id="sim-tab-easy"
+                    class="px-3 py-1.5" style="background:rgba(52,211,153,0.3);color:#34d399;">Fácil</button>
+            <button onclick="setSimLevel('medium')" id="sim-tab-medium"
+                    class="px-3 py-1.5" style="color:#6b7280;">Médio</button>
+            <button onclick="setSimLevel('hard')"   id="sim-tab-hard"
+                    class="px-3 py-1.5" style="color:#6b7280;">Difícil</button>
+          </div>
+        </div>
+        <div class="p-5" style="background:rgba(5,150,105,0.04);">
+          <div id="sim-easy"   class="sim-panel"></div>
+          <div id="sim-medium" class="sim-panel hidden"></div>
+          <div id="sim-hard"   class="sim-panel hidden"></div>
+
+          <!-- Infinite training choice (shown after all 3 levels answered) -->
+          <div id="training-choice" class="hidden mt-4 pt-4 border-t border-white/5">
+            <p class="text-sm text-gray-400 mb-3 text-center font-medium">Continuar praticando?</p>
+            <div class="grid grid-cols-2 gap-3">
+              <button onclick="startInfiniteMode('focado')"
+                      class="py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+                      style="background:rgba(52,211,153,0.15); border:1px solid rgba(52,211,153,0.3); color:#34d399;">
+                🎯 FOCADO<br><span class="text-xs font-normal opacity-70">Este tópico</span>
+              </button>
+              <button onclick="startInfiniteMode('geral')"
+                      class="py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+                      style="background:rgba(147,197,253,0.15); border:1px solid rgba(147,197,253,0.3); color:#93c5fd;">
+                🌐 GERAL<br><span class="text-xs font-normal opacity-70">Mix aleatório</span>
+              </button>
+            </div>
+            <div id="infinite-exercise" class="hidden mt-4 rounded-xl p-4 text-sm"
+                 style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);">
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── 5. TREINAMENTO INFINITO ── -->
+      <section class="rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
+        <h2 class="text-lg font-bold mb-4 flex items-center gap-2 text-blue-300">
+          <span>♾️</span> Treinamento Infinito
+        </h2>
+        <div class="space-y-4">
+          <div class="rounded-lg p-4" style="background:rgba(255,255,255,0.04);">
+            <p class="text-xs font-semibold text-blue-400 mb-1">CONCEITO</p>
+            <p id="train-concept" class="text-gray-300 text-sm"></p>
+          </div>
+          <div class="rounded-lg p-4" style="background:rgba(255,255,255,0.04);">
+            <p class="text-xs font-semibold text-blue-400 mb-1">DRILL PARA PRATICAR</p>
+            <p id="train-drill" class="text-gray-300 text-sm"></p>
+          </div>
+          <div class="rounded-lg p-4" style="background:rgba(200,160,69,0.08); border:1px solid rgba(200,160,69,0.2);">
+            <p class="text-xs font-semibold mb-1" style="color:#c8a045;">🏆 DESAFIO DA SEMANA</p>
+            <p id="train-challenge" class="text-gray-300 text-sm"></p>
+          </div>
+          <button onclick="generateRandomSituation()"
+                  class="w-full py-3 rounded-lg text-sm font-semibold transition-colors pulse-gold"
+                  style="background:rgba(30,58,138,0.3); border:1px solid rgba(147,197,253,0.2); color:#93c5fd;">
+            🎲 Gerar nova situação aleatória
+          </button>
+          <div id="random-situation" class="hidden rounded-lg p-4 text-sm text-gray-300"
+               style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);"></div>
+        </div>
+      </section>
+
+      <!-- ── 6. DICA DO COACH ── -->
+      <section class="rounded-xl p-4 flex gap-3 rise gp-gold"
+               style="border:1px solid rgba(200,160,69,0.2);">
+        <span class="text-2xl">💡</span>
+        <div>
+          <p class="text-xs font-semibold mb-1" style="color:#c8a045;">Dica do Coach</p>
+          <p id="tip-text" class="text-gray-300 text-sm"></p>
+        </div>
+      </section>
+
+      <!-- ── Botão Concluir ── -->
+      <div class="pt-2 pb-4 text-center">
+        <button id="btn-complete" onclick="completeLesson()"
+                class="px-10 py-4 rounded-xl font-bold text-black text-lg transition-all hover:opacity-90 hover:scale-105 disabled:opacity-40 disabled:scale-100"
+                style="background:linear-gradient(135deg,#c8a045,#e8c065);">
+          ✅ Concluir Lição (+<span id="xp-preview">25</span> XP)
+        </button>
+      </div>
+
+    </div><!-- /lesson-content -->
+
+    <!-- ── Chat com o coach ── -->
+    <div class="mt-2 mb-4 rounded-xl overflow-hidden gp" style="border:1px solid rgba(255,255,255,0.06);">
+      <button onclick="toggleChat()"
+              class="w-full flex items-center justify-between px-6 py-4 hover:bg-white/5 transition-colors"
+              style="background:#111412;">
+        <span class="font-medium text-sm">💬 Perguntar ao Coach IA</span>
+        <span id="chat-arrow" class="text-gray-400 text-xs transition-transform">▼ abrir</span>
+      </button>
+      <div id="chat-panel" class="hidden" style="background:#0d0f0d;">
+        <div id="chat-messages" class="h-52 overflow-y-auto p-4 space-y-3">
+          <p class="text-center text-xs text-gray-500 py-2">Tire dúvidas sobre esta lição</p>
+        </div>
+        <div class="flex gap-2 p-3 border-t border-white/5">
+          <input id="chat-input" type="text" placeholder="Sua dúvida..."
+                 class="flex-1 px-3 py-2 rounded-lg text-sm text-white outline-none"
+                 style="background:#161a16; border:1px solid rgba(255,255,255,0.08);"
+                 onkeydown="if(event.key==='Enter') sendChat()" />
+          <button onclick="sendChat()" class="px-4 py-2 rounded-lg text-sm font-bold text-black"
+                  style="background:#c8a045;">Enviar</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Celebration Overlay ── -->
+  <div id="celebration-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center"
+       style="background:rgba(0,0,0,0.93);">
+    <div id="celebration-content" class="text-center px-8 py-10 rounded-2xl max-w-sm celebrate"
+         style="background:#111412; border:1px solid rgba(200,160,69,0.3);">
+      <div id="confetti-container" class="fixed inset-0 pointer-events-none overflow-hidden"></div>
+      <p class="text-6xl mb-3">🎉</p>
+      <p class="text-4xl font-black mb-1" style="color:#c8a045;" id="cel-xp">+25 XP</p>
+      <p class="text-2xl font-bold text-white mb-1">Lição Concluída!</p>
+      <p id="cel-streak" class="text-orange-400 text-sm mb-6"></p>
+      <div id="cel-next" class="rounded-xl p-4 mb-6 text-left" style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);">
+        <p class="text-xs text-gray-400 mb-1">Próxima lição</p>
+        <p id="cel-next-title" class="text-white font-semibold text-sm"></p>
+      </div>
+      <div class="flex gap-3">
+        <button onclick="goNextLesson()"
+                class="flex-1 py-3 rounded-xl font-bold text-black text-sm"
+                style="background:linear-gradient(135deg,#c8a045,#e8c065);">
+          Próxima Lição →
+        </button>
+        <button onclick="closeCelebration()"
+                class="px-4 py-3 rounded-xl text-sm font-semibold"
+                style="background:rgba(255,255,255,0.06); color:#9ca3af;">
+          Dashboard
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Bottom Navigation ── -->
+  <nav class="fixed bottom-0 left-0 right-0 z-40" style="background:#111412; border-top:1px solid rgba(255,255,255,0.08);">
+    <div class="max-w-4xl mx-auto flex justify-around">
+      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn">
+        <span class="text-lg">🏠</span> Home
+      </a>
+      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn active">
+        <span class="text-lg">📚</span> Currículo
+      </a>
+      <a href="/frontend/pages/flashcards.html" class="bot-nav-btn">
+        <span class="text-lg">🃏</span> Revisão
+      </a>
+    </div>
+  </nav>
+
+  <script type="module" src="../js/config.js"></script>
+  <script type="module" src="../js/auth.js"></script>
+  <script type="module" src="../js/api.js"></script>
+  <script type="module" src="../js/lesson.js"></script>
+</body>
+</html>

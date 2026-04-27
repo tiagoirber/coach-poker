@@ -1,0 +1,63 @@
+// =============================================================
+// firestore.rules — Regras de segurança do banco de dados
+//
+// Princípio: negar tudo por padrão.
+// Liberar acesso somente de forma explícita e mínima.
+//
+// Quem pode ler/escrever o quê:
+//  - users/{uid}  → leitura: próprio usuário; escrita: backend (Admin SDK)
+//  - completedLessons → leitura: próprio usuário; escrita: backend
+//
+// IMPORTANTE: o backend usa o Admin SDK, que ignora estas regras.
+// Estas regras protegem contra acesso DIRETO pelo client SDK
+// (ex: alguém abrindo o console do browser e tentando escrever).
+// =============================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Função auxiliar ──────────────────────────────────────
+    // Verifica se o usuário autenticado é o dono do documento
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // Verifica se o usuário é admin
+    // (lê o campo role do documento do próprio usuário)
+    function isAdmin() {
+      return request.auth != null &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // ── Coleção users ─────────────────────────────────────────
+    match /users/{uid} {
+
+      // Leitura: o próprio usuário pode ler seu documento
+      //          admins podem ler qualquer documento
+      allow read: if isOwner(uid) || isAdmin();
+
+      // Escrita: NEGADA pelo client SDK
+      // O backend (Admin SDK) é o único que escreve aqui.
+      // Isso evita que um usuário altere sua própria role pelo browser.
+      allow write: if false;
+
+      // ── Sub-coleção: lições concluídas ────────────────────
+      match /completedLessons/{lessonId} {
+
+        // Leitura: apenas o próprio usuário
+        allow read: if isOwner(uid);
+
+        // Escrita: negada pelo client SDK (feita via backend)
+        allow write: if false;
+      }
+    }
+
+    // ── Regra catch-all: nega todo o resto ───────────────────
+    // Qualquer coleção não mencionada acima é completamente bloqueada
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

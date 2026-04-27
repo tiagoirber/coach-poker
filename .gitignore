@@ -1,0 +1,20 @@
+# Dependências instaladas (node_modules pode ter 100MB+)
+node_modules/
+
+# Arquivo com suas chaves reais — NUNCA versionar isso!
+.env
+firebase-service-account.json
+
+# Arquivos de sistema
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build do Firebase
+.firebase/
+
+# Claude Code local settings
+.claude/

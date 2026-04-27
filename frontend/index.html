@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Poker Coach IA — Login</title>
+
+  <!-- Tailwind CSS via CDN (sem precisar de build) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Customiza o Tailwind com as cores do projeto
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            poker: {
+              bg:      '#0a0b0a',
+              surface: '#111412',
+              card:    '#161a16',
+              gold:    '#c8a045',
+              green:   '#059669',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Firebase Client SDK (autenticação no lado do usuário) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <link rel="stylesheet" href="./css/glass.css">
+</head>
+
+<body class="min-h-screen flex items-center justify-center"
+      style="background-color: #0a0b0a;">
+
+  <!-- Card de Login/Registro -->
+  <div class="w-full max-w-md login-glass">
+
+    <!-- Logo e título -->
+    <div class="text-center mb-8">
+      <div class="text-5xl mb-3">🃏</div>
+      <h1 class="text-3xl font-bold text-white">Poker Coach IA</h1>
+      <p class="text-gray-400 mt-1">Plano de Treinamento — 90 Dias</p>
+    </div>
+
+    <!-- Abas: Login / Registro -->
+    <div class="flex rounded-lg overflow-hidden border border-white/10 mb-6">
+      <button id="tab-login"
+              onclick="switchTab('login')"
+              class="flex-1 py-2.5 text-sm font-medium transition-colors bg-poker-gold text-black">
+        Entrar
+      </button>
+      <button id="tab-register"
+              onclick="switchTab('register')"
+              class="flex-1 py-2.5 text-sm font-medium transition-colors text-gray-400 hover:text-white">
+        Criar conta
+      </button>
+    </div>
+
+    <!-- Formulário de Login -->
+    <form id="form-login" onsubmit="handleLogin(event)"
+          class="space-y-4">
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">E-mail</label>
+        <input type="email" id="login-email" required
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="seu@email.com" />
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Senha</label>
+        <input type="password" id="login-password" required
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="••••••••" />
+      </div>
+
+      <!-- Mensagem de erro -->
+      <p id="login-error" class="text-red-400 text-sm hidden"></p>
+
+      <button type="submit" id="btn-login"
+              class="w-full py-3 rounded-lg font-semibold text-black transition-opacity hover:opacity-90"
+              style="background: #c8a045;">
+        Entrar
+      </button>
+
+      <p class="text-center text-sm text-gray-500">
+        <button type="button" onclick="handleResetPassword()"
+                class="text-yellow-500 hover:underline">
+          Esqueci minha senha
+        </button>
+      </p>
+
+      <!-- Divisor -->
+      <div class="flex items-center gap-3">
+        <div class="flex-1 h-px" style="background:rgba(255,255,255,0.08);"></div>
+        <span class="text-xs text-gray-600">ou</span>
+        <div class="flex-1 h-px" style="background:rgba(255,255,255,0.08);"></div>
+      </div>
+
+      <!-- Botão Google -->
+      <button type="button" onclick="handleGoogleLogin()"
+              class="w-full py-3 rounded-lg font-medium text-white flex items-center justify-center gap-3 transition-colors hover:bg-white/10"
+              style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1);">
+        <svg width="18" height="18" viewBox="0 0 48 48">
+          <path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.1-4z"/>
+          <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.1 18.9 12 24 12c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+          <path fill="#4CAF50" d="M24 44c5.2 0 9.9-1.9 13.5-5l-6.2-5.2C29.4 35.5 26.8 36 24 36c-5.2 0-9.6-2.9-11.3-7.1l-6.5 5C9.6 39.6 16.3 44 24 44z"/>
+          <path fill="#1976D2" d="M43.6 20H24v8h11.3c-.9 2.4-2.5 4.4-4.6 5.8l6.2 5.2C40.8 35.5 44 30.2 44 24c0-1.3-.1-2.7-.4-4z"/>
+        </svg>
+        Entrar com Google
+      </button>
+    </form>
+
+    <!-- Formulário de Registro (oculto por padrão) -->
+    <form id="form-register" onsubmit="handleRegister(event)"
+          class="space-y-4 hidden">
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Nome completo</label>
+        <input type="text" id="reg-name" required
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="Seu nome" />
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">E-mail</label>
+        <input type="email" id="reg-email" required
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="seu@email.com" />
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Senha</label>
+        <input type="password" id="reg-password" required minlength="6"
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="Mínimo 6 caracteres" />
+      </div>
+
+      <div>
+        <label class="block text-sm text-gray-400 mb-1">Confirmar senha</label>
+        <input type="password" id="reg-confirm" required minlength="6"
+               class="w-full px-4 py-3 rounded-lg text-white text-sm outline-none focus:ring-2 focus:ring-yellow-500/50"
+               style="background: #161a16; border: 1px solid rgba(255,255,255,0.08);"
+               placeholder="Repita a senha" />
+      </div>
+
+      <p id="reg-error" class="text-red-400 text-sm hidden"></p>
+
+      <button type="submit" id="btn-register"
+              class="w-full py-3 rounded-lg font-semibold text-black transition-opacity hover:opacity-90"
+              style="background: #c8a045;">
+        Criar minha conta
+      </button>
+    </form>
+
+  </div><!-- /card -->
+
+  <!-- Módulos JS do projeto (type="module" habilita import/export) -->
+  <script type="module" src="./js/config.js"></script>
+  <script type="module" src="./js/auth.js"></script>
+</body>
+</html>

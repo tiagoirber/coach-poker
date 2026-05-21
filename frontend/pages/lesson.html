@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lição — Poker Coach IA</title>
+  <title>Lição — Poker Coach</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -25,19 +25,19 @@
     .celebrate { animation: celebrate .6s ease forwards; }
     @keyframes confetti-fall { to { transform: translateY(110vh) rotate(720deg); opacity:0; } }
 
-    /* Poker Cards */
+    /* Poker Cards (+25% — escala visual da mesa) */
     .pcard {
       display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
-      width:40px; height:56px; background:white; border-radius:5px;
+      width:50px; height:70px; background:white; border-radius:6px;
       border:1.5px solid #e5e7eb; box-shadow:0 3px 8px rgba(0,0,0,0.5);
       position:relative; font-family:Georgia,serif; flex-shrink:0; user-select:none;
     }
-    .pcard .r { position:absolute; top:3px; left:5px; font-size:11px; font-weight:900; line-height:1; }
-    .pcard .rb { position:absolute; bottom:3px; right:5px; font-size:11px; font-weight:900; line-height:1; transform:rotate(180deg); }
-    .pcard .s { font-size:18px; line-height:1; }
+    .pcard .r { position:absolute; top:4px; left:6px; font-size:14px; font-weight:900; line-height:1; }
+    .pcard .rb { position:absolute; bottom:4px; right:6px; font-size:14px; font-weight:900; line-height:1; transform:rotate(180deg); }
+    .pcard .s { font-size:23px; line-height:1; }
     .pcard.red { color:#dc2626; }
     .pcard.blk { color:#1e293b; }
-    .pcard-back { width:40px;height:56px;border-radius:5px;background:linear-gradient(135deg,#1e3a5f,#1e3a5f);border:2px solid #3b82f6;box-shadow:0 3px 8px rgba(0,0,0,0.5);flex-shrink:0; }
+    .pcard-back { width:50px;height:70px;border-radius:6px;background:linear-gradient(135deg,#1e3a5f,#1e3a5f);border:2px solid #3b82f6;box-shadow:0 3px 8px rgba(0,0,0,0.5);flex-shrink:0; }
 
     /* Glossary tooltips */
     .gl-term {
@@ -70,6 +70,21 @@
     .act-allin { background:rgba(168,85,247,0.1);  border-color:rgba(168,85,247,0.3);  color:#a78bfa; }
     .act-allin:hover { background:rgba(168,85,247,0.2); }
 
+    /* Infinite Training mode buttons */
+    .mode-btn { transition:all .2s; }
+    .mode-btn.active-focado {
+      background:rgba(52,211,153,0.3) !important;
+      border-color:rgba(52,211,153,0.7) !important;
+      box-shadow:0 0 12px rgba(52,211,153,0.25);
+      transform:scale(1.03);
+    }
+    .mode-btn.active-geral {
+      background:rgba(147,197,253,0.3) !important;
+      border-color:rgba(147,197,253,0.7) !important;
+      box-shadow:0 0 12px rgba(147,197,253,0.25);
+      transform:scale(1.03);
+    }
+
     /* Analysis tabs */
     .ana-tab { padding:6px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; border:1px solid transparent; transition:all .15s; }
     .ana-tab.active { background:rgba(200,160,69,0.2); border-color:rgba(200,160,69,0.4); color:#c8a045; }
@@ -93,6 +108,37 @@
     /* Bottom nav */
     .bot-nav-btn { display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 16px; color:#6b7280; font-size:11px; font-weight:600; text-decoration:none; transition:color .15s; border-top:2px solid transparent; }
     .bot-nav-btn.active, .bot-nav-btn:hover { color:#c8a045; border-top-color:#c8a045; }
+
+    /* Wizard step panels — apenas o ativo é exibido */
+    .step-panel { display:none; }
+    .step-panel.active {
+      display:block;
+      animation: step-slide-in 320ms cubic-bezier(.2,.8,.2,1) both;
+    }
+    @keyframes step-slide-in {
+      from { opacity:0; transform:translateX(36px); }
+      to   { opacity:1; transform:translateX(0); }
+    }
+
+    /* Stepper fixo logo abaixo da navbar (h-14 = 56px) */
+    #progress-stepper {
+      position:sticky;
+      top:56px;
+      z-index:40;
+      background:#0a0b0a;
+      padding:10px 16px 8px;
+      margin:0 -16px 8px;
+      border-bottom:1px solid rgba(255,255,255,0.05);
+    }
+
+    /* Cada bolinha do stepper é um botão clicável */
+    .step-dot {
+      background:none; border:none; padding:0; cursor:pointer;
+      display:flex; flex-direction:column; align-items:center; min-width:44px;
+      transition:transform .12s;
+    }
+    .step-dot:hover { transform:scale(1.06); }
+    .step-dot:focus-visible { outline:2px solid #c8a045; outline-offset:4px; border-radius:8px; }
   </style>
 </head>
 
@@ -102,7 +148,7 @@
   <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
     <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <a href="/frontend/pages/dashboard.html" class="text-gray-400 hover:text-white transition-colors text-sm">← Dashboard</a>
+        <a href="/pages/dashboard.html" class="text-gray-400 hover:text-white transition-colors text-sm">← Dashboard</a>
         <span class="text-white/20">|</span>
         <span id="nav-lesson-title" class="text-sm text-gray-300 truncate max-w-xs"></span>
       </div>
@@ -127,15 +173,18 @@
     <!-- Loading -->
     <div id="loading-state" class="text-center py-20">
       <div class="inline-block w-10 h-10 border-2 border-yellow-500/20 border-t-yellow-500 rounded-full animate-spin mb-4"></div>
-      <p class="text-gray-400">Gerando sua lição com IA...</p>
+      <p class="text-gray-400">Preparando sua lição...</p>
       <p class="text-gray-600 text-sm mt-1">Isso pode levar alguns segundos</p>
     </div>
 
     <!-- Conteúdo principal -->
     <div id="lesson-content" class="hidden space-y-6">
 
+      <!-- ── Stepper de progressão ── -->
+      <div id="progress-stepper" class="overflow-x-auto pb-1" style="scrollbar-width:none;-ms-overflow-style:none;"></div>
+
       <!-- ── 1. TEORIA ── -->
-      <section class="rounded-xl p-6 rise gp" style="border:1px solid rgba(255,255,255,0.06);">
+      <section id="step-theory" class="step-panel active rounded-xl p-6 rise gp" style="border:1px solid rgba(255,255,255,0.06);">
         <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
           <span class="text-xl">📖</span> Teoria
         </h2>
@@ -147,7 +196,7 @@
       </section>
 
       <!-- ── 2. FEYNMAN ── -->
-      <section id="feynman-section" class="rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
+      <section id="feynman-section" class="step-panel rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
         <h2 class="text-lg font-bold mb-1 flex items-center gap-2 text-blue-300">
           <span>🧬</span> Consolidação Feynman
         </h2>
@@ -169,98 +218,91 @@
         </div>
       </section>
 
-      <!-- ── 3. QUIZ ── -->
-      <section id="quiz-section" class="rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06); position:relative;">
-        <!-- Lock overlay (shown until Feynman done) -->
-        <div id="quiz-lock" class="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-xl"
-             style="background:rgba(10,11,10,0.85); backdrop-filter:blur(4px);">
-          <span class="text-3xl mb-3">🔒</span>
-          <p class="text-sm text-gray-400 text-center px-8">Complete a consolidação Feynman acima para desbloquear o quiz.</p>
-        </div>
-        <div class="px-6 py-4 flex items-center justify-between" style="background:#161a16;">
+      <!-- ── 3. QUIZ FÁCIL ── -->
+      <section id="step-quiz-easy" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(52,211,153,0.15);color:#34d399;">FÁCIL</span>
           <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
-          <div class="flex rounded-lg overflow-hidden text-xs font-semibold" style="border:1px solid rgba(255,255,255,0.08);">
-            <button onclick="setQuizLevel('easy')"   id="quiz-tab-easy"
-                    class="px-3 py-1.5 transition-colors" style="background:#34d399;color:#000;">Fácil</button>
-            <button onclick="setQuizLevel('medium')" id="quiz-tab-medium"
-                    class="px-3 py-1.5 transition-colors" style="color:#6b7280;">Médio</button>
-            <button onclick="setQuizLevel('hard')"   id="quiz-tab-hard"
-                    class="px-3 py-1.5 transition-colors" style="color:#6b7280;">Difícil</button>
-          </div>
         </div>
-        <div class="p-6 space-y-4" style="background:#111412;">
-          <div id="quiz-easy"   class="space-y-4"></div>
-          <div id="quiz-medium" class="space-y-4 hidden"></div>
-          <div id="quiz-hard"   class="space-y-4 hidden"></div>
+        <div class="p-6" style="background:#111412;">
+          <div id="quiz-easy" class="space-y-4"></div>
         </div>
       </section>
 
-      <!-- ── 4. SIMULAÇÃO DE MÃOS ── -->
-      <section class="rounded-xl overflow-hidden rise gp-green" style="border:1px solid rgba(52,211,153,0.15);">
-        <div class="px-6 py-4 flex items-center justify-between" style="background:rgba(5,150,105,0.1);">
+      <!-- ── 4. QUIZ MÉDIO ── -->
+      <section id="step-quiz-medium" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(251,191,36,0.15);color:#fbbf24;">MÉDIO</span>
+          <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
+        </div>
+        <div class="p-6" style="background:#111412;">
+          <div id="quiz-medium" class="space-y-4"></div>
+        </div>
+      </section>
+
+      <!-- ── 5. QUIZ DIFÍCIL ── -->
+      <section id="step-quiz-hard" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
+          <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
+        </div>
+        <div class="p-6" style="background:#111412;">
+          <div id="quiz-hard" class="space-y-4"></div>
+        </div>
+      </section>
+
+      <!-- ── 6. SIMULAÇÃO FÁCIL ── -->
+      <section id="step-sim-easy" class="step-panel rounded-xl overflow-hidden rise gp-green" style="border:1px solid rgba(52,211,153,0.15);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:rgba(5,150,105,0.1);">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(52,211,153,0.15);color:#34d399;">FÁCIL</span>
           <h2 class="text-lg font-bold flex items-center gap-2 text-green-400"><span>🎯</span> Simulação de Mãos</h2>
-          <div class="flex rounded-lg overflow-hidden text-xs font-semibold" style="border:1px solid rgba(52,211,153,0.2);">
-            <button onclick="setSimLevel('easy')"   id="sim-tab-easy"
-                    class="px-3 py-1.5" style="background:rgba(52,211,153,0.3);color:#34d399;">Fácil</button>
-            <button onclick="setSimLevel('medium')" id="sim-tab-medium"
-                    class="px-3 py-1.5" style="color:#6b7280;">Médio</button>
-            <button onclick="setSimLevel('hard')"   id="sim-tab-hard"
-                    class="px-3 py-1.5" style="color:#6b7280;">Difícil</button>
-          </div>
         </div>
         <div class="p-5" style="background:rgba(5,150,105,0.04);">
-          <div id="sim-easy"   class="sim-panel"></div>
-          <div id="sim-medium" class="sim-panel hidden"></div>
-          <div id="sim-hard"   class="sim-panel hidden"></div>
-
-          <!-- Infinite training choice (shown after all 3 levels answered) -->
-          <div id="training-choice" class="hidden mt-4 pt-4 border-t border-white/5">
-            <p class="text-sm text-gray-400 mb-3 text-center font-medium">Continuar praticando?</p>
-            <div class="grid grid-cols-2 gap-3">
-              <button onclick="startInfiniteMode('focado')"
-                      class="py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
-                      style="background:rgba(52,211,153,0.15); border:1px solid rgba(52,211,153,0.3); color:#34d399;">
-                🎯 FOCADO<br><span class="text-xs font-normal opacity-70">Este tópico</span>
-              </button>
-              <button onclick="startInfiniteMode('geral')"
-                      class="py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
-                      style="background:rgba(147,197,253,0.15); border:1px solid rgba(147,197,253,0.3); color:#93c5fd;">
-                🌐 GERAL<br><span class="text-xs font-normal opacity-70">Mix aleatório</span>
-              </button>
-            </div>
-            <div id="infinite-exercise" class="hidden mt-4 rounded-xl p-4 text-sm"
-                 style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06);">
-            </div>
-          </div>
+          <div id="sim-easy" class="sim-panel"></div>
         </div>
       </section>
 
-      <!-- ── 5. TREINAMENTO INFINITO ── -->
-      <section class="rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
-        <h2 class="text-lg font-bold mb-4 flex items-center gap-2 text-blue-300">
+      <!-- ── 7. SIMULAÇÃO MÉDIO ── -->
+      <section id="step-sim-medium" class="step-panel rounded-xl overflow-hidden rise gp-green" style="border:1px solid rgba(52,211,153,0.15);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:rgba(5,150,105,0.1);">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(251,191,36,0.15);color:#fbbf24;">MÉDIO</span>
+          <h2 class="text-lg font-bold flex items-center gap-2 text-green-400"><span>🎯</span> Simulação de Mãos</h2>
+        </div>
+        <div class="p-5" style="background:rgba(5,150,105,0.04);">
+          <div id="sim-medium" class="sim-panel"></div>
+        </div>
+      </section>
+
+      <!-- ── 8. SIMULAÇÃO DIFÍCIL ── -->
+      <section id="step-sim-hard" class="step-panel rounded-xl overflow-hidden rise gp-green" style="border:1px solid rgba(52,211,153,0.15);">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:rgba(5,150,105,0.1);">
+          <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
+          <h2 class="text-lg font-bold flex items-center gap-2 text-green-400"><span>🎯</span> Simulação de Mãos</h2>
+        </div>
+        <div class="p-5" style="background:rgba(5,150,105,0.04);">
+          <div id="sim-hard" class="sim-panel"></div>
+        </div>
+      </section>
+
+      <!-- ── 9. TREINAMENTO INFINITO ── -->
+      <section id="step-training" class="step-panel rounded-xl p-6 rise gp-blue" style="border:1px solid rgba(147,197,253,0.15);">
+        <h2 class="text-lg font-bold mb-2 flex items-center gap-2 text-blue-300">
           <span>♾️</span> Treinamento Infinito
         </h2>
-        <div class="space-y-4">
-          <div class="rounded-lg p-4" style="background:rgba(255,255,255,0.04);">
-            <p class="text-xs font-semibold text-blue-400 mb-1">CONCEITO</p>
-            <p id="train-concept" class="text-gray-300 text-sm"></p>
-          </div>
-          <div class="rounded-lg p-4" style="background:rgba(255,255,255,0.04);">
-            <p class="text-xs font-semibold text-blue-400 mb-1">DRILL PARA PRATICAR</p>
-            <p id="train-drill" class="text-gray-300 text-sm"></p>
-          </div>
-          <div class="rounded-lg p-4" style="background:rgba(200,160,69,0.08); border:1px solid rgba(200,160,69,0.2);">
-            <p class="text-xs font-semibold mb-1" style="color:#c8a045;">🏆 DESAFIO DA SEMANA</p>
-            <p id="train-challenge" class="text-gray-300 text-sm"></p>
-          </div>
-          <button onclick="generateRandomSituation()"
-                  class="w-full py-3 rounded-lg text-sm font-semibold transition-colors pulse-gold"
-                  style="background:rgba(30,58,138,0.3); border:1px solid rgba(147,197,253,0.2); color:#93c5fd;">
-            🎲 Gerar nova situação aleatória
+        <p class="text-xs text-gray-400 mb-5">Pratique mãos avançadas (nível Difícil) sobre este tópico ou misturando o que você já aprendeu.</p>
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <button id="btn-mode-focado" onclick="startInfiniteHand('focado')"
+                  class="mode-btn py-4 rounded-xl text-sm font-bold"
+                  style="background:rgba(52,211,153,0.15); border:1px solid rgba(52,211,153,0.3); color:#34d399;">
+            🎯 FOCADO<br><span class="text-xs font-normal opacity-70">Este tópico</span>
           </button>
-          <div id="random-situation" class="hidden rounded-lg p-4 text-sm text-gray-300"
-               style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06);"></div>
+          <button id="btn-mode-geral" onclick="startInfiniteHand('geral')"
+                  class="mode-btn py-4 rounded-xl text-sm font-bold"
+                  style="background:rgba(147,197,253,0.15); border:1px solid rgba(147,197,253,0.3); color:#93c5fd;">
+            🌐 GERAL<br><span class="text-xs font-normal opacity-70">Mix de tópicos concluídos</span>
+          </button>
         </div>
+        <div id="infinite-hand" class="hidden mt-4"></div>
       </section>
 
       <!-- ── 6. DICA DO COACH ── -->
@@ -289,7 +331,7 @@
       <button onclick="toggleChat()"
               class="w-full flex items-center justify-between px-6 py-4 hover:bg-white/5 transition-colors"
               style="background:#111412;">
-        <span class="font-medium text-sm">💬 Perguntar ao Coach IA</span>
+        <span class="font-medium text-sm">💬 Perguntar ao Coach</span>
         <span id="chat-arrow" class="text-gray-400 text-xs transition-transform">▼ abrir</span>
       </button>
       <div id="chat-panel" class="hidden" style="background:#0d0f0d;">
@@ -341,18 +383,19 @@
   <!-- ── Bottom Navigation ── -->
   <nav class="fixed bottom-0 left-0 right-0 z-40" style="background:#111412; border-top:1px solid rgba(255,255,255,0.08);">
     <div class="max-w-4xl mx-auto flex justify-around">
-      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn">
+      <a href="/pages/dashboard.html" class="bot-nav-btn">
         <span class="text-lg">🏠</span> Home
       </a>
-      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn active">
+      <a href="/pages/dashboard.html" class="bot-nav-btn active">
         <span class="text-lg">📚</span> Currículo
       </a>
-      <a href="/frontend/pages/flashcards.html" class="bot-nav-btn">
+      <a href="/pages/flashcards.html" class="bot-nav-btn">
         <span class="text-lg">🃏</span> Revisão
       </a>
     </div>
   </nav>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
   <script type="module" src="../js/config.js"></script>
   <script type="module" src="../js/auth.js"></script>
   <script type="module" src="../js/api.js"></script>

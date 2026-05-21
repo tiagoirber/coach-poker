@@ -4,7 +4,7 @@
 // Rating: Errei → 1min | Difícil → 10min | Bom → 1d | Fácil → 3d
 // =============================================================
 
-import { fbAuth, CURRICULUM } from './config.js';
+import { fbAuth, CURRICULUM, LESSON_CACHE_VER } from './config.js';
 import { userApi } from './api.js';
 
 // ── State ─────────────────────────────────────────────────────
@@ -41,7 +41,7 @@ function saveDeck() {
 function buildDeckFromLessons() {
   const newCards = [];
   CURRICULUM.forEach(topic => {
-    const cacheKey = `lesson_v3_${topic.day}`;
+    const cacheKey = `lesson_${LESSON_CACHE_VER}_${topic.day}`;
     const cached   = localStorage.getItem(cacheKey);
     if (!cached) return;
     try {

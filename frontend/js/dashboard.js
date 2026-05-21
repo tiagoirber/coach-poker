@@ -67,7 +67,7 @@ async function loadProgress() {
     document.getElementById('stat-xp').textContent         = progress.totalXP.toLocaleString('pt-BR');
     document.getElementById('stat-streak').textContent     = `${progress.streak} 🔥`;
     document.getElementById('stat-completed').textContent  = progress.completedLessons;
-    document.getElementById('stat-remaining').textContent  = 90 - progress.completedLessons;
+    document.getElementById('stat-remaining').textContent  = Math.max(0, 90 - Math.min(progress.completedLessons, 90));
 
     // Barra de progresso geral
     const pct = progress.percentComplete;
@@ -87,23 +87,38 @@ async function loadLeaderboard() {
 
     const medals = ['🥇', '🥈', '🥉'];
 
-    container.innerHTML = ranking.map((entry) => {
+    container.innerHTML = '';
+    ranking.forEach((entry) => {
       const isMe = entry.uid === uid;
-      return `
-        <div class="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${isMe ? 'ring-1 ring-yellow-500/30' : ''}"
-             style="background:${isMe ? 'rgba(200,160,69,0.08)' : '#111412'};">
-          <span class="text-lg w-6 text-center">
-            ${medals[entry.position - 1] || entry.position}
-          </span>
-          <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium truncate ${isMe ? 'text-yellow-400' : 'text-white'}">
-              ${entry.name}${isMe ? ' (você)' : ''}
-            </p>
-            <p class="text-xs text-gray-500">${entry.streak} dias seguidos 🔥</p>
-          </div>
-          <span class="text-xs font-bold" style="color:#c8a045;">${entry.totalXP} XP</span>
-        </div>`;
-    }).join('');
+      const row  = document.createElement('div');
+      row.className = `flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${isMe ? 'ring-1 ring-yellow-500/30' : ''}`;
+      row.style.background = isMe ? 'rgba(200,160,69,0.08)' : '#111412';
+
+      const medal = document.createElement('span');
+      medal.className = 'text-lg w-6 text-center';
+      medal.textContent = medals[entry.position - 1] || entry.position;
+
+      const info = document.createElement('div');
+      info.className = 'flex-1 min-w-0';
+
+      const name = document.createElement('p');
+      name.className = `text-sm font-medium truncate ${isMe ? 'text-yellow-400' : 'text-white'}`;
+      // textContent evita XSS — entry.name vem do Firestore e pode conter HTML injetado
+      name.textContent = (entry.name || 'Anônimo') + (isMe ? ' (você)' : '');
+
+      const streak = document.createElement('p');
+      streak.className = 'text-xs text-gray-500';
+      streak.textContent = `${entry.streak} dias seguidos 🔥`;
+
+      const xp = document.createElement('span');
+      xp.className = 'text-xs font-bold';
+      xp.style.color = '#c8a045';
+      xp.textContent = `${entry.totalXP} XP`;
+
+      info.append(name, streak);
+      row.append(medal, info, xp);
+      container.appendChild(row);
+    });
 
     if (ranking.length === 0) {
       container.innerHTML = '<p class="text-center text-sm text-gray-500 py-4">Sem dados ainda.</p>';
@@ -120,10 +135,13 @@ function renderCurriculum() {
     ? CURRICULUM
     : CURRICULUM.filter(t => t.week === parseInt(currentFilter));
 
+  // Pré-calcula o primeiro dia não concluído em O(n) — evita O(n²) dentro do map
+  const firstIncompleteDay = (filtered.find(t => !completedDays.has(t.day)) || {}).day;
+
   container.innerHTML = filtered.map(topic => {
     const done    = completedDays.has(topic.day);
     const colors  = CATEGORY_COLORS[topic.category];
-    const isNext  = !done && !filtered.slice(0, filtered.indexOf(topic)).some(t => !completedDays.has(t.day));
+    const isNext  = !done && topic.day === firstIncompleteDay;
 
     return `
       <div class="flex items-center gap-3 rounded-lg px-4 py-3 transition-colors cursor-pointer hover:bg-white/5"
@@ -173,7 +191,7 @@ window.filterWeek = function(value) {
 
 // ── Navega para a página da lição ─────────────────────────────
 window.openLesson = function(day) {
-  window.location.href = `/frontend/pages/lesson.html?day=${day}`;
+  window.location.href = `/pages/lesson.html?day=${day}`;
 };
 
 // ── Modal de conclusão ────────────────────────────────────────

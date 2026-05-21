@@ -92,10 +92,10 @@ export const progressApi = {
 
 export const claudeApi = {
   // Gera o conteúdo completo de uma lição
-  getLesson: (day, title, description, category) =>
+  getLesson: (day, title, description, category, forceNew = false) =>
     apiFetch('/claude/lesson', {
       method: 'POST',
-      body:   JSON.stringify({ day, title, description, category }),
+      body:   JSON.stringify({ day, title, description, category, forceNew }),
     }),
 
   // Envia uma mensagem ao coach IA
@@ -103,5 +103,15 @@ export const claudeApi = {
     apiFetch('/claude/chat', {
       method: 'POST',
       body:   JSON.stringify({ message, context }),
+    }),
+
+  // Gera UMA mão de prática (Treinamento Infinito) no nível Difícil.
+  // Aceita um AbortSignal opcional para cancelar requisições obsoletas
+  // (ex: usuário clica FOCADO e GERAL em sequência rápida).
+  practiceHand: (topicTitle, context = 'tournament', signal) =>
+    apiFetch('/claude/practice-hand', {
+      method: 'POST',
+      body:   JSON.stringify({ topicTitle, context }),
+      signal,
     }),
 };

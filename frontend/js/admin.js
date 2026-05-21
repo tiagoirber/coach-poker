@@ -12,6 +12,7 @@ import { userApi } from './api.js';
 
 let pendingDeleteUid  = null; // UID aguardando confirmação de deleção
 let pendingDeleteName = null;
+let allUsers          = []; // cache para lookups por uid nos handlers de onclick
 
 // ── Inicialização ─────────────────────────────────────────────
 fbAuth.onAuthStateChanged(async (user) => {
@@ -45,16 +46,18 @@ async function loadUsers() {
     document.getElementById('user-count').textContent  = users.length - adminCount;
 
     // Renderiza tabela
+    allUsers = users;
     const tbody = document.getElementById('users-table');
+    const safe = (s) => DOMPurify.sanitize(String(s ?? ''), { ALLOWED_TAGS: [] });
     tbody.innerHTML = users.map(u => {
       const isMe = u.uid === myUid;
       return `
         <tr class="border-t border-white/5 hover:bg-white/[0.02]">
           <td class="px-4 py-3 text-white font-medium">
-            ${u.name}
+            ${safe(u.name)}
             ${isMe ? '<span class="text-xs text-yellow-500 ml-1">(você)</span>' : ''}
           </td>
-          <td class="px-4 py-3 text-gray-400 text-xs">${u.email}</td>
+          <td class="px-4 py-3 text-gray-400 text-xs">${safe(u.email)}</td>
           <td class="px-4 py-3">
             <span class="text-xs font-bold px-2 py-1 rounded-full ${u.role === 'admin' ? 'text-yellow-400' : 'text-gray-400'}"
                   style="background:${u.role === 'admin' ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.05)'};">
@@ -65,12 +68,12 @@ async function loadUsers() {
           <td class="px-4 py-3">
             <div class="flex gap-2">
               ${!isMe ? `
-                <button onclick="toggleRole('${u.uid}', '${u.role}', '${u.name}')"
+                <button onclick="toggleRole('${u.uid}')"
                         class="text-xs px-2 py-1 rounded border transition-colors hover:bg-white/5"
                         style="border-color:rgba(255,255,255,0.1); color:#9ca3af;">
                   ${u.role === 'admin' ? '↓ user' : '↑ admin'}
                 </button>
-                <button onclick="openDeleteModal('${u.uid}', '${u.name.replace(/'/g, "\\'")}')"
+                <button onclick="openDeleteModal('${u.uid}')"
                         class="text-xs px-2 py-1 rounded border transition-colors hover:bg-red-900/20"
                         style="border-color:rgba(239,68,68,0.2); color:#f87171;">
                   Remover
@@ -93,9 +96,12 @@ async function loadUsers() {
 }
 
 // ── Alterna role do usuário ───────────────────────────────────
-window.toggleRole = async function(uid, currentRole, name) {
-  const newRole = currentRole === 'admin' ? 'user' : 'admin';
-  const action  = newRole === 'admin' ? 'promover' : 'rebaixar';
+window.toggleRole = async function(uid) {
+  const user        = allUsers.find(u => u.uid === uid);
+  const currentRole = user?.role || 'user';
+  const name        = user?.name || uid;
+  const newRole     = currentRole === 'admin' ? 'user' : 'admin';
+  const action      = newRole === 'admin' ? 'promover' : 'rebaixar';
 
   if (!confirm(`Deseja ${action} ${name} para "${newRole}"?`)) return;
 
@@ -108,7 +114,8 @@ window.toggleRole = async function(uid, currentRole, name) {
 };
 
 // ── Modal de confirmação de deleção ───────────────────────────
-window.openDeleteModal = function(uid, name) {
+window.openDeleteModal = function(uid) {
+  const name        = allUsers.find(u => u.uid === uid)?.name || uid;
   pendingDeleteUid  = uid;
   pendingDeleteName = name;
   document.getElementById('delete-name').textContent = name;

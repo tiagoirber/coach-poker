@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Dashboard — Poker Coach IA</title>
+  <title>Dashboard — Poker Coach</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -31,7 +31,7 @@
 
       <div class="flex items-center gap-2">
         <span class="text-xl">🃏</span>
-        <span class="font-bold text-white">Poker Coach IA</span>
+        <span class="font-bold text-white">Poker Coach</span>
       </div>
 
       <div class="flex items-center gap-3">
@@ -45,10 +45,10 @@
           <div class="absolute right-0 mt-2 w-48 rounded-lg overflow-hidden shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all"
                style="background:#161a16; border:1px solid rgba(255,255,255,0.08);">
             <p id="nav-email" class="px-4 py-2 text-xs text-gray-400 border-b border-white/5 truncate"></p>
-            <a href="/frontend/pages/profile.html"
+            <a href="/pages/profile.html"
                class="block px-4 py-2 text-sm text-gray-300 hover:bg-white/5">Meu Perfil</a>
             <!-- Link admin — visível só para admins (via JS) -->
-            <a href="/frontend/pages/admin.html" id="admin-link"
+            <a href="/pages/admin.html" id="admin-link"
                class="hidden px-4 py-2 text-sm text-yellow-400 hover:bg-white/5">⚙️ Admin</a>
             <button onclick="logout()"
                     class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-white/5">
@@ -160,13 +160,13 @@
   <!-- Bottom Navigation -->
   <nav class="fixed bottom-0 left-0 right-0 z-40" style="background:#111412; border-top:1px solid rgba(255,255,255,0.08);">
     <div class="max-w-4xl mx-auto flex justify-around">
-      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn active">
+      <a href="/pages/dashboard.html" class="bot-nav-btn active">
         <span class="text-lg">🏠</span> Home
       </a>
-      <a href="/frontend/pages/dashboard.html" class="bot-nav-btn">
+      <a href="/pages/dashboard.html" class="bot-nav-btn">
         <span class="text-lg">📚</span> Currículo
       </a>
-      <a href="/frontend/pages/flashcards.html" class="bot-nav-btn">
+      <a href="/pages/flashcards.html" class="bot-nav-btn">
         <span class="text-lg">🃏</span> Revisão
       </a>
     </div>

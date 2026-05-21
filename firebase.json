@@ -6,32 +6,51 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "redirects": [
+      { "source": "/frontend/pages/dashboard.html", "destination": "/pages/dashboard.html", "type": 301 },
+      { "source": "/frontend/pages/lesson.html",    "destination": "/pages/lesson.html",    "type": 301 },
+      { "source": "/frontend/pages/flashcards.html","destination": "/pages/flashcards.html","type": 301 },
+      { "source": "/frontend/index.html",           "destination": "/index.html",           "type": 301 },
+      { "source": "/frontend/**",                   "destination": "/",                     "type": 301 }
+    ],
     "rewrites": [
       {
         "source": "/api/**",
-        "run": {
-          "serviceId": "poker-coach-api",
-          "region": "us-central1"
-        }
+        "function": "api",
+        "region": "us-central1"
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
     ],
     "headers": [
       {
         "source": "**/*.@(js|css)",
         "headers": [
-          { "key": "Cache-Control", "value": "max-age=3600" }
+          { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
         ]
       },
       {
         "source": "**",
         "headers": [
-          { "key": "X-Frame-Options",        "value": "SAMEORIGIN" },
-          { "key": "X-Content-Type-Options",  "value": "nosniff" },
-          { "key": "Referrer-Policy",          "value": "strict-origin-when-cross-origin" }
+          { "key": "X-Frame-Options",       "value": "SAMEORIGIN" },
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy",        "value": "strict-origin-when-cross-origin" }
         ]
       }
     ],
     "trailingSlash": false
+  },
+  "functions": {
+    "source": ".",
+    "runtime": "nodejs20",
+    "ignore": [
+      "node_modules",
+      ".git",
+      "*.local",
+      "firebase-debug.log"
+    ]
   },
   "firestore": {
     "rules": "firestore.rules",

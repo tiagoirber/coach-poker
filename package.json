@@ -3,11 +3,20 @@
   "version": "1.0.0",
   "description": "Sistema completo de treinamento de poker com IA - 90 dias",
   "type": "module",
-  "main": "backend/server.js",
+  "main": "functions/index.js",
   "scripts": {
     "start": "node backend/server.js",
     "dev": "node --watch backend/server.js",
-    "deploy": "firebase deploy"
+    "deploy": "firebase deploy",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "globals": "^15.0.0",
+    "supertest": "^7.0.0",
+    "vitest": "^2.0.0"
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -15,6 +24,7 @@
     "express": "^4.19.2",
     "express-rate-limit": "^7.3.1",
     "firebase-admin": "^12.1.0",
+    "firebase-functions": "^6.0.0",
     "helmet": "^7.1.0"
   },
   "engines": {

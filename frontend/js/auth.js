@@ -31,17 +31,18 @@ fbAuth.onAuthStateChanged(async (user) => {
   const isLesson      = path.includes('lesson');
   const isAdmin       = path.includes('admin');
   const isFlashcards  = path.includes('flashcards');
+  const isProfile     = path.includes('profile');
 
   if (user) {
     // Só redireciona se NÃO estiver no meio do registro Google
     // (evita race condition onde o redirect acontece antes do perfil ser criado)
     if (isAuthPage && !_googleRegistering) {
-      window.location.href = '/frontend/pages/dashboard.html';
+      window.location.href = '/pages/dashboard.html';
     }
     window._currentUser = user;
   } else {
-    if (isDashboard || isLesson || isAdmin || isFlashcards) {
-      window.location.href = '/frontend/index.html';
+    if (isDashboard || isLesson || isAdmin || isFlashcards || isProfile) {
+      window.location.href = '/index.html';
     }
   }
 });
@@ -206,7 +207,7 @@ window.handleGoogleLogin = async function() {
     _googleRegistering = false;
     // Redireciona manualmente após garantir que o perfil foi criado
     if (fbAuth.currentUser) {
-      window.location.href = '/frontend/pages/dashboard.html';
+      window.location.href = '/pages/dashboard.html';
     }
   }
 };
@@ -214,5 +215,5 @@ window.handleGoogleLogin = async function() {
 // ── logout ────────────────────────────────────────────────────
 window.logout = async function() {
   await fbAuth.signOut();
-  window.location.href = '/frontend/index.html';
+  window.location.href = '/index.html';
 };

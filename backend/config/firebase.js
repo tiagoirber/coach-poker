@@ -1,46 +1,30 @@
-// =============================================================
-// firebase.js — Inicializa o Firebase Admin SDK no servidor
-//
-// O Admin SDK tem privilégios de superusuário: pode ler/escrever
-// qualquer documento no Firestore e verificar tokens JWT do Auth.
-// Por isso, as credenciais ficam SOMENTE no servidor.
-// =============================================================
-
 import admin from 'firebase-admin';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 import 'dotenv/config';
 
-// __dirname não existe em ES Modules — reconstruímos assim:
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+const __dirname  = dirname(__filename);
 
-// Lê o arquivo JSON com as credenciais da conta de serviço do Firebase
-// Baixe em: Firebase Console → ⚙️ Configurações → Contas de serviço → Gerar nova chave privada
-const serviceAccountPath = resolve(
-  __dirname,
-  '../../',
-  process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './firebase-service-account.json'
-);
-
-let serviceAccount;
-try {
-  serviceAccount = JSON.parse(readFileSync(serviceAccountPath, 'utf8'));
-} catch (err) {
-  console.error('❌ Arquivo de credenciais Firebase não encontrado:', serviceAccountPath);
-  console.error('   Baixe em: Firebase Console → Configurações → Contas de serviço');
-  process.exit(1); // Para o servidor imediatamente — sem credenciais, nada funciona
-}
-
-// Evita inicializar o Firebase mais de uma vez (guard contra hot-reload)
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-  });
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    // Variável de ambiente (Railway ou outro cloud)
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  } else {
+    // Tenta carregar arquivo local (dev); se falhar usa credenciais padrão (Cloud Functions)
+    try {
+      const path = resolve(__dirname, '../../', process.env.SA_PATH || './firebase-service-account.json');
+      const serviceAccount = JSON.parse(readFileSync(path, 'utf8'));
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } catch {
+      // Ambiente Google Cloud (Firebase Functions) — credenciais automáticas
+      admin.initializeApp();
+    }
+  }
 }
 
-// Exporta as instâncias prontas para uso nas rotas
-export const db   = admin.firestore(); // Banco de dados Firestore
-export const auth = admin.auth();      // Serviço de autenticação
+export const db   = admin.firestore();
+export const auth = admin.auth();
 export default admin;

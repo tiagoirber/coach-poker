@@ -7,7 +7,9 @@
 
 // URL do seu servidor Express (backend)
 // Em desenvolvimento: localhost; em produção: URL do Cloud Run ou Render
-export const API_URL = 'http://127.0.0.1:3000/api';
+export const API_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://127.0.0.1:3001/api'
+  : '/api';
 
 // Configuração do Firebase (pode ser pública — é o projeto, não a chave admin)
 // Encontre em: Firebase Console → Configurações do projeto → Seus apps → Configuração SDK
@@ -28,6 +30,12 @@ if (!firebase.apps.length) {
 // Exporta as instâncias do Firebase para os outros módulos
 export const fbAuth = firebase.auth();
 export const fbDb   = firebase.firestore();
+
+// Versão do formato JSON da lição em cache (localStorage + Firestore).
+// Bumpar APENAS quando o schema muda — bump invalida cache de todos os usuários.
+// Consumido por lesson.js e flashcards.js — manter centralizado evita bugs de
+// divergência (flashcards lendo cache morto enquanto lesson grava em outra chave).
+export const LESSON_CACHE_VER = 'v8';
 
 // Currículo completo — reutilizado no dashboard e na página de lição
 export const CURRICULUM = [
@@ -121,6 +129,7 @@ export const CURRICULUM = [
   {day:88, week:13, title:"Live Poker Adjustments",       description:"Diferenças entre live e online.",                     category:"MENTAL"},
   {day:89, week:13, title:"Construindo seu Estilo",       description:"Integrar GTO com exploração.",                        category:"MENTAL"},
   {day:90, week:13, title:"Mindset de Elite",             description:"A psicologia dos vencedores de High Stakes.",         category:"MENTAL"},
+  {day:91, week:14, title:"Cash Game — Diferenças do Torneio", description:"Bônus: deep stacks, rake, mindset de sessão longa.", category:"POSTFLOP"},
 ];
 
 // Cores de cada categoria (para badges coloridos)
@@ -132,6 +141,7 @@ export const CATEGORY_COLORS = {
   ICM:      { bg:'rgba(252,165,165,0.15)', text:'#fca5a5' },
 };
 
+// ATENÇÃO: cópia espelhada em backend/routes/progress.js — manter em sincronia.
 export const XP_BY_CATEGORY = {
   MATH:30, PREFLOP:25, POSTFLOP:25, MENTAL:20, ICM:30
 };

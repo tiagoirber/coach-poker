@@ -58,6 +58,8 @@ router.post('/register', verifyToken, async (req, res) => {
     };
 
     await userRef.set(newUser);
+    auth.setCustomUserClaims(req.user.uid, { role: 'user' })
+      .catch(e => console.warn('setCustomUserClaims (register) falhou:', e.message));
 
     res.status(201).json({ message: 'Perfil criado com sucesso!', user: newUser });
   } catch (err) {
@@ -95,6 +97,8 @@ router.get('/me', verifyToken, async (req, res) => {
         lastLoginAt: now,
       };
       await userRef.set(newUser);
+      auth.setCustomUserClaims(req.user.uid, { role: 'user' })
+        .catch(e => console.warn('setCustomUserClaims (auto-create) falhou:', e.message));
       console.log(`Perfil auto-criado para ${req.user.uid} (${name})`);
       return res.json({ user: { uid: req.user.uid, ...newUser } });
     }
@@ -177,10 +181,10 @@ router.patch('/:uid/role', verifyToken, requireAdmin, async (req, res) => {
   }
 
   try {
-    await db.collection('users').doc(uid).update({
-      role,
-      updatedAt: new Date().toISOString(),
-    });
+    await Promise.all([
+      db.collection('users').doc(uid).update({ role, updatedAt: new Date().toISOString() }),
+      auth.setCustomUserClaims(uid, { role }),
+    ]);
     res.json({ message: `Role do usuário ${uid} alterada para '${role}'.` });
   } catch (err) {
     console.error('Erro ao alterar role:', err);

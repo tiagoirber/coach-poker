@@ -4,28 +4,158 @@
 // infinite training FOCADO/GERAL, celebration screen, glossary
 // =============================================================
 
-import { fbAuth, CURRICULUM, CATEGORY_COLORS, XP_BY_CATEGORY } from './config.js';
+import { fbAuth, CURRICULUM, CATEGORY_COLORS, XP_BY_CATEGORY, LESSON_CACHE_VER } from './config.js';
 import { claudeApi, progressApi, userApi } from './api.js';
 import { applyGlossary } from './glossary.js';
+
+// Sanitiza recursivamente todos os campos string de um objeto vindo da IA.
+// Strips qualquer HTML — o conteúdo da IA deve ser texto puro; o HTML é
+// construído pelos nossos templates, nunca pela IA.
+function sanitizeAiData(val) {
+  if (typeof val === 'string') {
+    return typeof DOMPurify !== 'undefined'
+      ? DOMPurify.sanitize(val, { ALLOWED_TAGS: [] })
+      : val;
+  }
+  if (Array.isArray(val)) return val.map(sanitizeAiData);
+  if (val && typeof val === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(val)) out[k] = sanitizeAiData(v);
+    return out;
+  }
+  return val;
+}
 
 // ── State ─────────────────────────────────────────────────────
 let currentTopic   = null;
 let lessonData     = null;
 let alreadyDone    = false;
-let quizAnswered   = { easy:{}, medium:{}, hard:{} };
-let simAnswered    = { easy:false, medium:false, hard:false };
-let feynmanDone    = false;
+let quizState = {
+  easy:   { current: 0, answers: {} },
+  medium: { current: 0, answers: {} },
+  hard:   { current: 0, answers: {} },
+};
+let simAnswered      = { easy:false, medium:false, hard:false };
+let infiniteAnswered = false;
+let feynmanDone      = false;
 let nextLesson     = null;
-const CACHE_KEY_VER = 'v3';
+// Cancela uma geração de mão em voo se o usuário disparar outra antes do
+// resultado chegar (ex: clica FOCADO depois GERAL). Sem isso, a resposta
+// tardia da primeira sobrescreveria window._infSim e o usuário responderia
+// contra a mão errada.
+let infiniteController = null;
+
+// ── Step progression ──────────────────────────────────────────
+const STEPS = [
+  { id:'theory',      label:'Teoria',     icon:'📖' },
+  { id:'feynman',     label:'Feynman',    icon:'🧬' },
+  { id:'quiz-easy',   label:'Quiz Fácil', icon:'🧠' },
+  { id:'quiz-medium', label:'Quiz Médio', icon:'🧠' },
+  { id:'quiz-hard',   label:'Quiz Difíc', icon:'🧠' },
+  { id:'sim-easy',    label:'Sim Fácil',  icon:'🎯' },
+  { id:'sim-medium',  label:'Sim Médio',  icon:'🎯' },
+  { id:'sim-hard',    label:'Sim Difíc',  icon:'🎯' },
+  { id:'training',    label:'Treino ∞',   icon:'♾️' },
+];
+const STEP_NEXT = {
+  'feynman':    'quiz-easy',
+  'quiz-easy':  'quiz-medium',
+  'quiz-medium':'quiz-hard',
+  'quiz-hard':  'sim-easy',
+  'sim-easy':   'sim-medium',
+  'sim-medium': 'sim-hard',
+  'sim-hard':   'training',
+};
+let completedSteps = new Set(['theory']);
+let currentStep    = 'theory';
+
+function stepPanelId(stepId) {
+  // theory e feynman têm IDs próprios; demais seguem step-{id}
+  if (stepId === 'feynman') return 'feynman-section';
+  return `step-${stepId}`;
+}
+
+function showStep(stepId) {
+  document.querySelectorAll('.step-panel').forEach(el => el.classList.remove('active'));
+  const target = document.getElementById(stepPanelId(stepId));
+  if (target) {
+    // re-trigger animação removendo e re-adicionando active no próximo frame
+    void target.offsetWidth;
+    target.classList.add('active');
+  }
+  currentStep = stepId;
+  updateStepper();
+  // não rolamos a página — a etapa surge no mesmo espaço visual
+  window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+function updateStepper() {
+  const el = document.getElementById('progress-stepper');
+  if (!el) return;
+  let html = '<div style="display:flex;align-items:flex-start;min-width:max-content;">';
+  STEPS.forEach((step, i) => {
+    const done    = completedSteps.has(step.id);
+    const current = step.id === currentStep;
+    let cStyle, lColor, icon;
+    if (current) {
+      cStyle = 'background:rgba(200,160,69,0.2);border-color:#c8a045;box-shadow:0 0 0 3px rgba(200,160,69,0.18);';
+      lColor = '#c8a045'; icon = step.icon;
+    } else if (done) {
+      cStyle = 'background:rgba(52,211,153,0.2);border-color:#34d399;';
+      lColor = '#34d399'; icon = '✓';
+    } else {
+      cStyle = 'background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.1);';
+      lColor = '#4b5563'; icon = '🔒';
+    }
+    html += `<button type="button" class="step-dot" onclick="goToStep('${step.id}')" aria-label="${step.label}">
+      <div style="width:30px;height:30px;border-radius:50%;border:2px solid;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;${cStyle}">${icon}</div>
+      <span style="font-size:8px;color:${lColor};text-align:center;margin-top:3px;line-height:1.2;max-width:44px;">${step.label}</span>
+    </button>`;
+    if (i < STEPS.length - 1) {
+      const lineColor = done ? 'rgba(52,211,153,0.35)' : 'rgba(255,255,255,0.07)';
+      html += `<div style="flex:1;height:2px;background:${lineColor};margin-top:14px;min-width:8px;"></div>`;
+    }
+  });
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+window.advanceStep = function(fromStepId) {
+  completedSteps.add(fromStepId);
+  const nextId = STEP_NEXT[fromStepId];
+  if (nextId) {
+    showStep(nextId);
+  } else {
+    updateStepper();
+  }
+};
+
+window.goToStep = function(stepId) {
+  if (stepId === currentStep) return;
+  if (completedSteps.has(stepId)) {
+    showStep(stepId);
+    return;
+  }
+  // Pulo para frente — pedir confirmação
+  const target = STEPS.find(s => s.id === stepId);
+  const ok = window.confirm(
+    `Pular para "${target.label}"? As etapas anteriores serão marcadas como concluídas.`
+  );
+  if (!ok) return;
+  // marca todas as anteriores como concluídas
+  const idx = STEPS.findIndex(s => s.id === stepId);
+  for (let i = 0; i < idx; i++) completedSteps.add(STEPS[i].id);
+  showStep(stepId);
+};
 
 // ── Init ──────────────────────────────────────────────────────
 fbAuth.onAuthStateChanged(async (user) => {
   if (!user) return;
   const params = new URLSearchParams(window.location.search);
   const day    = parseInt(params.get('day'));
-  if (!day || day < 1 || day > 90) { window.location.href = '/frontend/pages/dashboard.html'; return; }
+  if (!day || day < 1 || day > 91) { window.location.href = '/pages/dashboard.html'; return; }
   currentTopic = CURRICULUM.find(t => t.day === day);
-  if (!currentTopic) { window.location.href = '/frontend/pages/dashboard.html'; return; }
+  if (!currentTopic) { window.location.href = '/pages/dashboard.html'; return; }
   nextLesson = CURRICULUM.find(t => t.day === day + 1) || null;
   renderHeader();
   await checkIfCompleted();
@@ -55,6 +185,8 @@ async function checkIfCompleted() {
     if (alreadyDone) {
       document.getElementById('btn-complete').classList.add('hidden');
       document.getElementById('already-done-badge').classList.remove('hidden');
+      // Lição já concluída: libera navegação completa pelo stepper sem confirmações
+      STEPS.forEach(s => completedSteps.add(s.id));
     }
   } catch {}
 }
@@ -62,15 +194,32 @@ async function checkIfCompleted() {
 // ── Load lesson ───────────────────────────────────────────────
 async function loadLesson() {
   const { day, title, description, category } = currentTopic;
-  const cacheKey = `lesson_${CACHE_KEY_VER}_${day}`;
-  const cached   = localStorage.getItem(cacheKey);
-  if (cached) {
-    try { lessonData = JSON.parse(cached); renderLesson(); return; } catch {}
+  const visitKey  = `lesson_visits_${day}`;
+  const visitCount = parseInt(localStorage.getItem(visitKey) || '0', 10);
+  const forceNew   = visitCount > 0;
+  const cacheKey   = `lesson_${LESSON_CACHE_VER}_${day}`;
+
+  // Na 1ª visita tenta o cache local antes de ir ao servidor
+  if (!forceNew) {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        lessonData = sanitizeAiData(JSON.parse(cached));
+        localStorage.setItem(visitKey, visitCount + 1);
+        renderLesson();
+        return;
+      } catch {}
+    }
+  } else {
+    // 2ª visita em diante: descarta cache local para garantir conteúdo novo
+    localStorage.removeItem(cacheKey);
   }
+
   try {
-    const { lesson } = await claudeApi.getLesson(day, title, description, category);
-    lessonData = lesson;
-    localStorage.setItem(cacheKey, JSON.stringify(lesson));
+    const { lesson } = await claudeApi.getLesson(day, title, description, category, forceNew);
+    lessonData = sanitizeAiData(lesson);
+    localStorage.setItem(cacheKey, JSON.stringify(lesson)); // salva raw no cache; sanitiza ao ler
+    localStorage.setItem(visitKey, visitCount + 1);
     renderLesson();
   } catch (err) {
     document.getElementById('loading-state').innerHTML = `
@@ -91,14 +240,14 @@ function renderLesson() {
   document.getElementById('loading-state').classList.add('hidden');
   document.getElementById('lesson-content').classList.remove('hidden');
   renderTheory();
-  renderQuizLevel('easy');
-  renderQuizLevel('medium');
-  renderQuizLevel('hard');
+  renderQuizCard('easy');
+  renderQuizCard('medium');
+  renderQuizCard('hard');
   renderSimLevel('easy');
   renderSimLevel('medium');
   renderSimLevel('hard');
-  renderInfiniteTraining();
   document.getElementById('tip-text').innerHTML = applyGlossary(lessonData.tip || '');
+  showStep(currentStep);
 }
 
 // ── POKER CARDS ───────────────────────────────────────────────
@@ -181,13 +330,14 @@ function renderStreets(streets) {
 
 // ── ACTION BUTTON TYPE ────────────────────────────────────────
 function actionClass(label) {
-  const l = label.toLowerCase();
-  if (l === 'fold')                        return 'act-btn act-fold';
-  if (l === 'check')                       return 'act-btn act-check';
-  if (l.startsWith('call'))                return 'act-btn act-call';
-  if (l === 'all-in' || l === 'all in')    return 'act-btn act-allin';
-  if (l.startsWith('raise'))               return 'act-btn act-raise';
-  if (l.startsWith('bet'))                 return 'act-btn act-bet';
+  // Remove prefixos "A) ", "B) " que a IA às vezes adiciona
+  const l = label.replace(/^[A-Za-z]\)\s*/, '').toLowerCase().trim();
+  if (l === 'fold')                                        return 'act-btn act-fold';
+  if (l === 'check')                                       return 'act-btn act-check';
+  if (l.startsWith('call'))                                return 'act-btn act-call';
+  if (l === 'all-in' || l === 'all in' || l.startsWith('all-in') || l.startsWith('all in')) return 'act-btn act-allin';
+  if (l.startsWith('raise'))                               return 'act-btn act-raise';
+  if (l.startsWith('bet'))                                 return 'act-btn act-bet';
   return 'act-btn act-bet';
 }
 
@@ -197,35 +347,129 @@ function renderSimLevel(level) {
   const container = document.getElementById(`sim-${level}`);
   if (!sim) { container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
 
-  const analysis = sim.analysis || {};
+  const analysis   = sim.analysis || {};
+  const heroCards  = cardsHtml(sim.heroHand);
+  const boardParsed = parseCards(sim.board);
+  const hasBoard   = boardParsed.length > 0;
+
+  // Streets summary for the collapsible
+  const streetsSummary = (sim.streets || []).map(st => `
+    <div class="flex gap-2 text-xs leading-relaxed">
+      <span class="font-bold whitespace-nowrap" style="color:#c8a045;">${st.name}:</span>
+      <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
+    </div>`).join('');
+
+  // Board cards (or face-down placeholders)
+  const boardDisplay = hasBoard
+    ? cardsHtml(sim.board)
+    : `<div class="pcard-back" style="opacity:0.5;"></div>
+       <div class="pcard-back" style="opacity:0.5;"></div>
+       <div class="pcard-back" style="opacity:0.5;"></div>`;
+
+  // Narrative paragraphs
+  const narrativeText = sim.narrative || sim.situation || '';
+  const narrativeHtml = narrativeText.split('\n').filter(Boolean)
+    .map(p => `<p>${applyGlossary(p)}</p>`).join('');
 
   container.innerHTML = `
-    ${renderPokerTable(sim)}
-    ${renderStreets(sim.streets)}
 
-    <div class="rounded-lg p-4 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.05);">
-      <p class="text-gray-300 text-sm mb-2">${sim.situation || ''}</p>
-      <p class="text-white font-semibold text-sm">👉 ${sim.question || 'Qual é sua ação?'}</p>
+    <!-- ══ MESA DE POKER ══ -->
+    <div class="relative rounded-2xl mb-5 overflow-hidden select-none"
+         style="background:radial-gradient(ellipse at 50% 40%, #1f6b30 0%, #0f4019 55%, #071a09 100%);
+                border:4px solid #6b3e0a;
+                box-shadow:inset 0 0 60px rgba(0,0,0,0.55), 0 8px 32px rgba(0,0,0,0.7);
+                min-height:300px; padding:25px 20px;">
+
+      <!-- Linha decorativa da mesa -->
+      <div class="absolute inset-4 rounded-2xl pointer-events-none"
+           style="border:2px solid rgba(255,255,255,0.06);"></div>
+
+      <!-- VILLAIN (topo) -->
+      <div class="flex flex-col items-center mb-3">
+        <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.3);">
+          ${sim.villainPosition || 'Vilão'}
+        </p>
+        <div class="flex gap-1.5">
+          <div class="pcard-back"></div>
+          <div class="pcard-back"></div>
+        </div>
+      </div>
+
+      <!-- BOARD + POT (centro) -->
+      <div class="flex items-center justify-center gap-6 my-4">
+        <div class="flex gap-1.5 flex-wrap justify-center">${boardDisplay}</div>
+        <div class="text-center rounded-xl px-4 py-2 flex-shrink-0"
+             style="background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.08);">
+          <div class="text-xs uppercase tracking-wider mb-0.5" style="color:rgba(255,255,255,0.35);">Pote</div>
+          <div class="font-black text-2xl" style="color:#fbbf24;">${sim.pot}</div>
+        </div>
+      </div>
+
+      <!-- HERO (base) -->
+      <div class="flex items-end justify-between mt-3">
+        <div class="flex flex-col items-center">
+          <div class="flex gap-1.5">${heroCards}</div>
+          <div class="flex items-center gap-1.5 mt-2">
+            <div class="w-2.5 h-2.5 rounded-full" style="background:#fbbf24; box-shadow:0 0 6px #fbbf24;"></div>
+            <p class="text-xs font-bold tracking-wider uppercase" style="color:#fbbf24;">${sim.position}</p>
+            <span class="text-xs" style="color:rgba(255,255,255,0.3);">— Você</span>
+          </div>
+        </div>
+        ${sim.stack ? `
+        <div class="text-right">
+          <div class="text-xs uppercase" style="color:rgba(255,255,255,0.25);">Stack</div>
+          <div class="text-sm font-bold" style="color:rgba(255,255,255,0.55);">${sim.stack}</div>
+        </div>` : ''}
+      </div>
     </div>
 
+    <!-- ══ COMO A MÃO SE DESENVOLVEU ══ -->
+    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
+      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;">
+        <span>📖</span> Como a Mão se Desenvolveu
+      </h3>
+      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+
+      ${streetsSummary ? `
+      <details class="mt-5">
+        <summary class="text-xs cursor-pointer select-none transition-colors hover:text-gray-300"
+                 style="color:#4b5563;">📋 Ver resumo das streets</summary>
+        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">
+          ${streetsSummary}
+        </div>
+      </details>` : ''}
+    </div>
+
+    <!-- ══ DECISÃO ══ -->
+    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+    </div>
+
+    <!-- ══ OPÇÕES ══ -->
     <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-${level}">
       ${(sim.options || []).map((opt, oi) => `
         <button onclick="answerSim('${level}',${oi},${sim.correct})"
                 id="sim-btn-${level}-${oi}"
-                class="${actionClass(opt)}">
+                class="${actionClass(opt)}"
+                style="font-size:14px; padding:10px 18px;">
           ${opt}
         </button>`).join('')}
     </div>
 
+    <!-- ══ FEEDBACK DE ACERTO/ERRO ══ -->
+    <div id="sim-feedback-${level}" class="hidden mb-3"></div>
+
+    <!-- ══ ANÁLISE (hidden until answered) ══ -->
     <div id="sim-analysis-${level}" class="hidden">
       <div class="flex gap-1 mb-3 flex-wrap">
         <button onclick="setAnalysisTab('${level}','explanation')" id="ana-${level}-explanation" class="ana-tab active">📖 Explicação</button>
         <button onclick="setAnalysisTab('${level}','ev')"          id="ana-${level}-ev"          class="ana-tab">📊 EV</button>
         <button onclick="setAnalysisTab('${level}','gto')"         id="ana-${level}-gto"         class="ana-tab">⚖️ GTO</button>
       </div>
-      <div class="rounded-lg p-4 text-sm" style="background:rgba(5,150,105,0.06); border:1px solid rgba(52,211,153,0.15);">
+      <div class="rounded-xl p-4 text-sm" style="background:rgba(5,150,105,0.06); border:1px solid rgba(52,211,153,0.15);">
         <div id="ana-${level}-explanation-content" class="text-gray-300 leading-relaxed space-y-2">
-          ${(analysis.explanation || sim.explanation || '').split('\n').filter(Boolean).map(p => `<p>${applyGlossary(p)}</p>`).join('')}
+          ${(analysis.explanation || '').split('\n').filter(Boolean).map(p => `<p>${applyGlossary(p)}</p>`).join('')}
         </div>
         <div id="ana-${level}-ev-content" class="hidden">
           <p class="text-xs font-bold text-green-400 mb-2">VALOR ESPERADO (EV)</p>
@@ -258,9 +502,55 @@ window.answerSim = function(level, selected, correct) {
     }
   });
 
+  // ── Feedback visual de acerto / erro ─────────────────────────
+  const correctLabel = (sim.options || [])[correct] || '';
+  const feedbackEl   = document.getElementById(`sim-feedback-${level}`);
+  if (feedbackEl) {
+    if (isCorrect) {
+      feedbackEl.innerHTML = `
+        <div class="rounded-xl p-4 flex items-center gap-3"
+             style="background:rgba(5,150,105,0.2); border:2px solid rgba(52,211,153,0.5);">
+          <span class="text-3xl flex-shrink-0">✅</span>
+          <div>
+            <p class="font-bold text-lg" style="color:#34d399;">Você acertou!</p>
+            <p class="text-sm text-gray-300 mt-0.5">Excelente decisão — veja a análise completa abaixo.</p>
+          </div>
+        </div>`;
+    } else {
+      feedbackEl.innerHTML = `
+        <div class="rounded-xl p-4 flex items-center gap-3"
+             style="background:rgba(239,68,68,0.15); border:2px solid rgba(239,68,68,0.45);">
+          <span class="text-3xl flex-shrink-0">❌</span>
+          <div>
+            <p class="font-bold text-lg" style="color:#f87171;">Você errou.</p>
+            <p class="text-sm text-gray-300 mt-0.5">A ação correta era:
+              <strong style="color:#34d399;">${correctLabel}</strong>
+            </p>
+          </div>
+        </div>`;
+    }
+    feedbackEl.classList.remove('hidden');
+  }
+
   document.getElementById(`sim-analysis-${level}`)?.classList.remove('hidden');
-  if (simAnswered.easy && simAnswered.medium && simAnswered.hard) {
-    document.getElementById('training-choice')?.classList.remove('hidden');
+
+  const nextStepId = STEP_NEXT[`sim-${level}`];
+  if (nextStepId) {
+    const isLast  = nextStepId === 'training';
+    const label   = isLast ? '♾️ Ir para o Treinamento Infinito →' : 'Próxima etapa →';
+    const btnStyle = isLast
+      ? 'background:rgba(147,197,253,0.15); border:1px solid rgba(147,197,253,0.3); color:#93c5fd;'
+      : 'background:rgba(52,211,153,0.15); border:1px solid rgba(52,211,153,0.3); color:#34d399;';
+    const container = document.getElementById(`sim-${level}`);
+    const advDiv = document.createElement('div');
+    advDiv.className = 'mt-4 pt-4 border-t border-white/5';
+    advDiv.innerHTML = `
+      <button onclick="this.parentElement.remove(); advanceStep('sim-${level}')"
+              class="w-full py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+              style="${btnStyle}">
+        ${label}
+      </button>`;
+    container.appendChild(advDiv);
   }
 };
 
@@ -271,71 +561,126 @@ window.setAnalysisTab = function(level, tab) {
   });
 };
 
-window.setSimLevel = function(level) {
-  ['easy','medium','hard'].forEach(l => {
-    document.getElementById(`sim-${l}`)?.classList.toggle('hidden', l !== level);
-  });
-  const colors = { easy:'rgba(52,211,153,0.3)', medium:'rgba(251,191,36,0.3)', hard:'rgba(239,68,68,0.3)' };
-  const text   = { easy:'#34d399', medium:'#fbbf24', hard:'#f87171' };
-  ['easy','medium','hard'].forEach(l => {
-    const tab = document.getElementById(`sim-tab-${l}`);
-    if (!tab) return;
-    if (l === level) { tab.style.background = colors[l]; tab.style.color = text[l]; }
-    else { tab.style.background = 'transparent'; tab.style.color = '#6b7280'; }
-  });
-};
 
 // ── QUIZ ──────────────────────────────────────────────────────
-function renderQuizLevel(level) {
+function renderQuizCard(level) {
   const questions = lessonData.quiz?.[level] || [];
+  const state     = quizState[level];
   const container = document.getElementById(`quiz-${level}`);
-  container.innerHTML = questions.map((q, qi) => `
-    <div class="rounded-lg p-4" style="background:#0d0f0d; border:1px solid rgba(255,255,255,0.06);" id="quiz-${level}-${qi}">
-      <p class="text-sm font-medium text-white mb-3">
-        <span class="text-xs mr-2" style="color:#6b7280;">Q${qi+1}</span>${q.question}
-      </p>
-      <div class="space-y-2">
-        ${(q.options || []).map((opt, oi) => `
-          <button onclick="answerQuiz('${level}',${qi},${oi},${q.correct})"
-                  id="quiz-btn-${level}-${qi}-${oi}"
-                  class="w-full text-left text-sm px-3 py-2 rounded-lg transition-colors"
-                  style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); color:#d1d5db;">
-            ${opt}
-          </button>`).join('')}
+  if (!container) return;
+
+  if (questions.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Quiz não disponível.</p>';
+    return;
+  }
+
+  // Tela de resultado final
+  if (state.current >= questions.length) {
+    const correct  = Object.values(state.answers).filter(a => a.isCorrect).length;
+    const total    = questions.length;
+    const emoji    = correct === total ? '🏆' : correct >= Math.ceil(total / 2) ? '👍' : '📚';
+    const nextStep = STEP_NEXT[`quiz-${level}`];
+    const alreadyAdvanced = completedSteps.has(`quiz-${level}`);
+    const advBtn = nextStep && !alreadyAdvanced ? `
+      <button onclick="this.style.display='none'; advanceStep('quiz-${level}')"
+              class="w-full mt-3 py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+              style="background:rgba(52,211,153,0.15); border:1px solid rgba(52,211,153,0.3); color:#34d399;">
+        Próxima etapa →
+      </button>` : '';
+    container.innerHTML = `
+      <div class="text-center py-8 rise">
+        <p class="text-4xl mb-3">${emoji}</p>
+        <p class="text-white font-bold text-xl mb-1">${correct}/${total} corretas</p>
+        <p class="text-gray-400 text-sm mb-5">${correct === total ? 'Perfeito! Domínio total.' : correct >= Math.ceil(total/2) ? 'Bom resultado! Continue praticando.' : 'Revise a teoria e tente novamente.'}</p>
+        <button onclick="resetQuizLevel('${level}')"
+                class="px-5 py-2 rounded-lg text-sm font-semibold transition-all hover:opacity-80"
+                style="background:rgba(200,160,69,0.15); border:1px solid rgba(200,160,69,0.3); color:#c8a045;">
+          🔄 Refazer quiz
+        </button>
+        ${advBtn}
+      </div>`;
+    if (!alreadyAdvanced) completedSteps.add(`quiz-${level}`); // marca como completado mas sem avançar ainda
+    updateStepper();
+    return;
+  }
+
+  const qi       = state.current;
+  const q        = questions[qi];
+  const answered = state.answers[qi];
+  const dots     = questions.map((_, i) => {
+    const col = i < qi ? '#34d399' : i === qi ? '#c8a045' : 'rgba(255,255,255,0.12)';
+    return `<div style="width:8px;height:8px;border-radius:50%;background:${col};"></div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="rise" style="animation:rise .3s ease forwards;">
+      <div class="flex justify-between items-center mb-5">
+        <span class="text-xs font-semibold" style="color:#6b7280;">Pergunta ${qi+1} de ${questions.length}</span>
+        <div class="flex gap-1.5">${dots}</div>
       </div>
-      <p id="quiz-exp-${level}-${qi}" class="hidden mt-3 text-xs text-gray-400 italic border-t border-white/5 pt-3">
-        💡 ${q.explanation || ''}
-      </p>
-    </div>`).join('');
+
+      <p class="text-sm font-semibold text-white leading-relaxed mb-5">${q.question}</p>
+
+      <div class="space-y-2 mb-4">
+        ${(q.options || []).map((opt, oi) => {
+          let bg = 'rgba(255,255,255,0.04)'; let br = 'rgba(255,255,255,0.08)'; let cl = '#d1d5db';
+          let extra = '';
+          if (answered !== undefined) {
+            if (oi === q.correct)                          { bg='rgba(5,150,105,0.18)'; br='rgba(52,211,153,0.5)'; cl='#34d399'; extra='font-semibold'; }
+            else if (oi === answered.selected)             { bg='rgba(239,68,68,0.12)'; br='rgba(239,68,68,0.4)';  cl='#f87171'; }
+            else                                           { bg='rgba(255,255,255,0.02)'; br='rgba(255,255,255,0.04)'; cl='#4b5563'; }
+          }
+          const click = answered !== undefined ? '' : `onclick="answerQuizCard('${level}',${qi},${oi},${q.correct})"`;
+          return `<button ${click} ${answered !== undefined ? 'disabled' : ''}
+                    class="w-full text-left text-sm px-4 py-3 rounded-xl transition-all ${extra} ${answered === undefined ? 'hover:border-white/20 hover:bg-white/8' : ''}"
+                    style="background:${bg}; border:1px solid ${br}; color:${cl}; cursor:${answered !== undefined ? 'default' : 'pointer'};">
+            ${opt}
+          </button>`;
+        }).join('')}
+      </div>
+
+      ${answered !== undefined ? (() => {
+          const isLast   = qi + 1 >= questions.length;
+          const nextSt   = STEP_NEXT[`quiz-${level}`];
+          const skipResult = isLast && nextSt;
+          const btnLabel = !isLast ? 'Próxima pergunta →'
+                         : skipResult ? 'Próxima etapa →'
+                         : 'Ver resultado →';
+          const btnClick = skipResult
+            ? `this.style.display='none'; advanceStep('quiz-${level}')`
+            : `nextQuizCard('${level}')`;
+          return `
+        <div class="rounded-xl p-4 mb-4" style="background:rgba(255,255,255,0.03); border-left:3px solid ${answered.isCorrect ? '#34d399' : '#f87171'};">
+          <p class="text-sm font-bold mb-2 ${answered.isCorrect ? 'text-green-400' : 'text-red-400'}">
+            ${answered.isCorrect ? '✅ Correto!' : '❌ Incorreto'}
+          </p>
+          <p class="text-gray-400 text-sm leading-relaxed">💡 ${q.explanation || ''}</p>
+        </div>
+        <button onclick="${btnClick}"
+                class="w-full py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+                style="background:${skipResult ? 'rgba(52,211,153,0.15)' : 'rgba(200,160,69,0.15)'}; border:1px solid ${skipResult ? 'rgba(52,211,153,0.3)' : 'rgba(200,160,69,0.3)'}; color:${skipResult ? '#34d399' : '#c8a045'};">
+          ${btnLabel}
+        </button>`;
+        })() : ''}
+    </div>`;
 }
 
-window.answerQuiz = function(level, qi, selected, correct) {
-  if (quizAnswered[level][qi] !== undefined) return;
-  quizAnswered[level][qi] = selected;
-  const isCorrect = selected === correct;
-  const btn = document.getElementById(`quiz-btn-${level}-${qi}-${selected}`);
-  btn.style.background  = isCorrect ? 'rgba(5,150,105,0.2)' : 'rgba(239,68,68,0.2)';
-  btn.style.borderColor = isCorrect ? 'rgba(52,211,153,0.4)' : 'rgba(239,68,68,0.4)';
-  btn.style.color       = isCorrect ? '#34d399' : '#f87171';
-  if (!isCorrect) {
-    const cb = document.getElementById(`quiz-btn-${level}-${qi}-${correct}`);
-    if (cb) { cb.style.background = 'rgba(5,150,105,0.2)'; cb.style.borderColor = 'rgba(52,211,153,0.4)'; cb.style.color = '#34d399'; }
-  }
-  document.getElementById(`quiz-exp-${level}-${qi}`)?.classList.remove('hidden');
+window.answerQuizCard = function(level, qi, selected, correct) {
+  if (quizState[level].answers[qi] !== undefined) return;
+  quizState[level].answers[qi] = { selected, isCorrect: selected === correct };
+  renderQuizCard(level);
 };
 
-window.setQuizLevel = function(level) {
-  ['easy','medium','hard'].forEach(l => {
-    document.getElementById(`quiz-${l}`)?.classList.toggle('hidden', l !== level);
-  });
-  const colors = { easy:'#34d399', medium:'#fbbf24', hard:'#f87171' };
-  ['easy','medium','hard'].forEach(l => {
-    const tab = document.getElementById(`quiz-tab-${l}`);
-    if (!tab) return;
-    if (l === level) { tab.style.background = colors[l]+'33'; tab.style.color = colors[l]; }
-    else { tab.style.background = 'transparent'; tab.style.color = '#6b7280'; }
-  });
+window.nextQuizCard = function(level) {
+  quizState[level].current++;
+  renderQuizCard(level);
 };
+
+window.resetQuizLevel = function(level) {
+  quizState[level] = { current: 0, answers: {} };
+  renderQuizCard(level);
+};
+
 
 // ── THEORY ────────────────────────────────────────────────────
 function renderTheory() {
@@ -370,91 +715,216 @@ window.submitFeynman = function() {
     </div>`;
   section.style.background = 'rgba(5,150,105,0.08)';
   section.style.borderColor = 'rgba(52,211,153,0.2)';
-  document.getElementById('quiz-lock')?.classList.add('hidden');
+  advanceStep('feynman');
 };
 
 // ── INFINITE TRAINING ─────────────────────────────────────────
-function renderInfiniteTraining() {
-  const t = lessonData.infiniteTraining || {};
-  document.getElementById('train-concept').innerHTML   = applyGlossary(t.concept || '');
-  document.getElementById('train-drill').innerHTML     = applyGlossary(t.drill || '');
-  document.getElementById('train-challenge').innerHTML = applyGlossary(t.challenge || '');
-}
+window.startInfiniteHand = async function(mode) {
+  // Cancela qualquer geração anterior ainda em voo
+  if (infiniteController) infiniteController.abort();
+  infiniteController = new AbortController();
+  const controller = infiniteController;
 
-window.startInfiniteMode = async function(mode) {
-  const exEl = document.getElementById('infinite-exercise');
-  exEl.innerHTML = '<p class="text-gray-500 animate-pulse text-sm">⏳ Gerando situação...</p>';
+  // Destaca visualmente o botão ativo
+  document.getElementById('btn-mode-focado')?.classList.remove('active-focado', 'active-geral');
+  document.getElementById('btn-mode-geral')?.classList.remove('active-focado', 'active-geral');
+  document.getElementById(`btn-mode-${mode}`)?.classList.add(`active-${mode}`);
+
+  const exEl = document.getElementById('infinite-hand');
   exEl.classList.remove('hidden');
+  exEl.innerHTML = '<p class="text-gray-500 animate-pulse text-sm py-6 text-center">⏳ Gerando uma nova mão difícil...</p>';
+  infiniteAnswered = false;
 
   let topicTitle = currentTopic.title;
+  let chosenTopic = currentTopic;
   if (mode === 'geral') {
     const completedStr = localStorage.getItem('completedDays');
-    let completedArr = completedStr ? JSON.parse(completedStr) : [];
-    if (!completedArr.length) {
-      const randomTopic = CURRICULUM[Math.floor(Math.random() * CURRICULUM.length)];
-      topicTitle = randomTopic.title;
-    } else {
+    const completedArr = completedStr ? JSON.parse(completedStr) : [];
+    if (completedArr.length) {
       const randomDay = completedArr[Math.floor(Math.random() * completedArr.length)];
-      const randomTopic = CURRICULUM.find(t => t.day === randomDay) || currentTopic;
-      topicTitle = randomTopic.title;
+      const randomTopic = CURRICULUM.find(t => t.day === randomDay);
+      if (randomTopic) { chosenTopic = randomTopic; topicTitle = randomTopic.title; }
+    } else {
+      chosenTopic = CURRICULUM[Math.floor(Math.random() * CURRICULUM.length)];
+      topicTitle = chosenTopic.title;
     }
   }
 
-  const positions = ['UTG','MP','CO','BTN','SB','BB'];
-  const hands     = ['A♠K♦','J♠T♠','9♥9♣','Q♦J♦','K♠Q♠','A♥J♥','T♣T♦','8♠7♠'];
-  const boards    = ['A♥7♣2♦','K♠Q♥J♣','9♦8♥7♠','T♣4♦2♥','A♣K♦Q♠','6♥5♣4♦'];
-  const pos   = positions[Math.floor(Math.random() * positions.length)];
-  const hand  = hands[Math.floor(Math.random() * hands.length)];
-  const board = boards[Math.floor(Math.random() * boards.length)];
+  const handContext = chosenTopic.day === 91 ? 'cash' : 'tournament';
 
   try {
-    const { reply } = await claudeApi.chat(
-      `Crie uma situação de poker: posição ${pos}, mão ${hand}, board ${board}. Tema: ${topicTitle}. Máximo 4 frases incluindo a ação correta e por quê.`,
-      topicTitle
-    );
+    const { sim } = await claudeApi.practiceHand(topicTitle, handContext, controller.signal);
+    // Se outra chamada substituiu este controller, descarta a resposta tardia
+    if (controller.signal.aborted) return;
+    renderInfiniteHand(sim, topicTitle, mode);
+  } catch (err) {
+    // AbortError é cancelamento intencional — não mostrar erro
+    if (err.name === 'AbortError' || controller.signal.aborted) return;
     exEl.innerHTML = `
-      <div class="flex items-center gap-2 mb-2">
-        <span class="text-xs font-bold px-2 py-0.5 rounded" style="background:rgba(200,160,69,0.2);color:#c8a045;">
-          ${mode === 'focado' ? '🎯 FOCADO' : '🌐 GERAL'}
-        </span>
-        <span class="text-xs text-gray-500">${topicTitle}</span>
-      </div>
-      <p class="text-gray-300 leading-relaxed">${applyGlossary(reply)}</p>
-      <button onclick="startInfiniteMode('${mode}')" class="mt-3 text-xs text-gray-500 hover:text-gray-300 transition-colors">
-        🔄 Gerar nova situação
-      </button>`;
-  } catch {
-    exEl.innerHTML = `<p class="text-gray-400">${pos} com ${hand} no board ${board}. Analise o conceito de <strong>${topicTitle}</strong> e defina sua linha de ação.</p>`;
+      <div class="rounded-xl p-4 text-sm" style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); color:#fca5a5;">
+        ❌ Não foi possível gerar a mão. Tente novamente.
+        <button onclick="startInfiniteHand('${mode}')" class="block mt-3 text-xs underline">🔄 Tentar de novo</button>
+      </div>`;
   }
 };
 
-window.generateRandomSituation = async function() {
-  const btn = event.target;
-  const origText = btn.textContent;
-  btn.textContent = '⏳ Gerando...';
-  btn.disabled = true;
-  const positions = ['UTG','MP','CO','BTN','SB','BB'];
-  const hands     = ['A♠K♦','J♠T♠','9♥9♣','Q♦J♦','K♠Q♠'];
-  const boards    = ['A♥7♣2♦','K♠Q♥J♣','9♦8♥7♠','T♣4♦2♥'];
-  const pos   = positions[Math.floor(Math.random() * positions.length)];
-  const hand  = hands[Math.floor(Math.random() * hands.length)];
-  const board = boards[Math.floor(Math.random() * boards.length)];
-  try {
-    const { reply } = await claudeApi.chat(
-      `Situação de poker: ${pos} com ${hand}, board ${board}. Tema: ${currentTopic?.title}. 3 frases + ação correta.`,
-      currentTopic?.title
-    );
-    const el = document.getElementById('random-situation');
-    el.innerHTML = applyGlossary(reply);
-    el.classList.remove('hidden');
-  } catch {
-    const el = document.getElementById('random-situation');
-    el.textContent = `${pos} com ${hand} no board ${board}. Analise ${currentTopic?.title} e defina sua ação.`;
-    el.classList.remove('hidden');
-  } finally {
-    btn.textContent = origText;
-    btn.disabled = false;
+function renderInfiniteHand(sim, topicTitle, mode) {
+  const exEl       = document.getElementById('infinite-hand');
+  const analysis   = sim.analysis || {};
+  const heroCards  = cardsHtml(sim.heroHand);
+  const hasBoard   = parseCards(sim.board).length > 0;
+
+  const streetsSummary = (sim.streets || []).map(st => `
+    <div class="flex gap-2 text-xs leading-relaxed">
+      <span class="font-bold whitespace-nowrap" style="color:#c8a045;">${st.name}:</span>
+      <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
+    </div>`).join('');
+
+  const boardDisplay = hasBoard ? cardsHtml(sim.board)
+    : `<div class="pcard-back" style="opacity:0.5;"></div>
+       <div class="pcard-back" style="opacity:0.5;"></div>
+       <div class="pcard-back" style="opacity:0.5;"></div>`;
+
+  const narrativeHtml = (sim.narrative || sim.situation || '').split('\n').filter(Boolean)
+    .map(p => `<p>${applyGlossary(p)}</p>`).join('');
+
+  const modeTag  = mode === 'focado' ? '🎯 FOCADO' : '🌐 GERAL';
+  const modeStyle = mode === 'focado'
+    ? 'background:rgba(52,211,153,0.15);color:#34d399;'
+    : 'background:rgba(147,197,253,0.15);color:#93c5fd;';
+
+  exEl.innerHTML = `
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <span class="text-xs font-bold px-2 py-0.5 rounded" style="${modeStyle}">${modeTag}</span>
+      <span class="text-xs text-gray-400">${topicTitle}</span>
+      <span class="text-xs font-bold ml-auto px-2 py-0.5 rounded" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
+    </div>
+
+    <div class="relative rounded-2xl mb-5 overflow-hidden select-none"
+         style="background:radial-gradient(ellipse at 50% 40%, #1f6b30 0%, #0f4019 55%, #071a09 100%);
+                border:4px solid #6b3e0a;
+                box-shadow:inset 0 0 60px rgba(0,0,0,0.55), 0 8px 32px rgba(0,0,0,0.7);
+                min-height:300px; padding:25px 20px;">
+      <div class="absolute inset-4 rounded-2xl pointer-events-none" style="border:2px solid rgba(255,255,255,0.06);"></div>
+      <div class="flex flex-col items-center mb-3">
+        <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.3);">${sim.villainPosition || 'Vilão'}</p>
+        <div class="flex gap-1.5"><div class="pcard-back"></div><div class="pcard-back"></div></div>
+      </div>
+      <div class="flex items-center justify-center gap-6 my-4">
+        <div class="flex gap-1.5 flex-wrap justify-center">${boardDisplay}</div>
+        <div class="text-center rounded-xl px-4 py-2 flex-shrink-0"
+             style="background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.08);">
+          <div class="text-xs uppercase tracking-wider mb-0.5" style="color:rgba(255,255,255,0.35);">Pote</div>
+          <div class="font-black text-2xl" style="color:#fbbf24;">${sim.pot}</div>
+        </div>
+      </div>
+      <div class="flex items-end justify-between mt-3">
+        <div class="flex flex-col items-center">
+          <div class="flex gap-1.5">${heroCards}</div>
+          <div class="flex items-center gap-1.5 mt-2">
+            <div class="w-2.5 h-2.5 rounded-full" style="background:#fbbf24; box-shadow:0 0 6px #fbbf24;"></div>
+            <p class="text-xs font-bold tracking-wider uppercase" style="color:#fbbf24;">${sim.position}</p>
+            <span class="text-xs" style="color:rgba(255,255,255,0.3);">— Você</span>
+          </div>
+        </div>
+        ${sim.stack ? `<div class="text-right"><div class="text-xs uppercase" style="color:rgba(255,255,255,0.25);">Stack</div><div class="text-sm font-bold" style="color:rgba(255,255,255,0.55);">${sim.stack}</div></div>` : ''}
+      </div>
+    </div>
+
+    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
+      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;"><span>📖</span> Como a Mão se Desenvolveu</h3>
+      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+      ${streetsSummary ? `
+      <details class="mt-5">
+        <summary class="text-xs cursor-pointer select-none hover:text-gray-300 transition-colors" style="color:#4b5563;">📋 Ver resumo das streets</summary>
+        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">${streetsSummary}</div>
+      </details>` : ''}
+    </div>
+
+    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+    </div>
+
+    <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-inf">
+      ${(sim.options || []).map((opt, oi) => `
+        <button onclick="answerInfiniteHand(${oi},${sim.correct})" id="sim-btn-inf-${oi}"
+                class="${actionClass(opt)}" style="font-size:14px; padding:10px 18px;">${opt}</button>`).join('')}
+    </div>
+
+    <div id="sim-feedback-inf" class="hidden mb-3"></div>
+
+    <div id="sim-analysis-inf" class="hidden">
+      <div class="flex gap-1 mb-3 flex-wrap">
+        <button onclick="setAnalysisTabInf('explanation')" id="ana-inf-explanation" class="ana-tab active">📖 Explicação</button>
+        <button onclick="setAnalysisTabInf('ev')"          id="ana-inf-ev"          class="ana-tab">📊 EV</button>
+        <button onclick="setAnalysisTabInf('gto')"         id="ana-inf-gto"         class="ana-tab">⚖️ GTO</button>
+      </div>
+      <div class="rounded-xl p-4 text-sm" style="background:rgba(5,150,105,0.06); border:1px solid rgba(52,211,153,0.15);">
+        <div id="ana-inf-explanation-content" class="text-gray-300 leading-relaxed space-y-2">
+          ${(analysis.explanation || '').split('\n').filter(Boolean).map(p => `<p>${applyGlossary(p)}</p>`).join('')}
+        </div>
+        <div id="ana-inf-ev-content" class="hidden">
+          <p class="text-xs font-bold text-green-400 mb-2">VALOR ESPERADO (EV)</p>
+          <p class="text-gray-300 font-mono text-xs leading-relaxed">${analysis.ev || '—'}</p>
+        </div>
+        <div id="ana-inf-gto-content" class="hidden">
+          <p class="text-xs font-bold text-blue-400 mb-2">FREQUÊNCIAS GTO</p>
+          <p class="text-gray-300 text-sm leading-relaxed">${applyGlossary(analysis.gto || '—')}</p>
+        </div>
+      </div>
+    </div>
+
+    <button onclick="startInfiniteHand('${mode}')"
+            class="w-full mt-5 py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+            style="background:rgba(200,160,69,0.15); border:1px solid rgba(200,160,69,0.3); color:#c8a045;">
+      🔄 Gerar nova mão
+    </button>`;
+
+  window._infSim = sim;
+}
+
+window.answerInfiniteHand = function(selected, correct) {
+  if (infiniteAnswered) return;
+  infiniteAnswered = true;
+  const sim = window._infSim || {};
+  const isCorrect = selected === correct;
+
+  (sim.options || []).forEach((_, oi) => {
+    const btn = document.getElementById(`sim-btn-inf-${oi}`);
+    if (!btn) return;
+    btn.disabled = true;
+    if (oi === selected) {
+      if (isCorrect) { btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399'; }
+      else           { btn.style.background = 'rgba(239,68,68,0.3)'; btn.style.borderColor = 'rgba(239,68,68,0.6)'; btn.style.color = '#f87171'; }
+    }
+    if (oi === correct && !isCorrect) {
+      btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399';
+    }
+  });
+
+  const correctLabel = (sim.options || [])[correct] || '';
+  const feedbackEl   = document.getElementById('sim-feedback-inf');
+  if (feedbackEl) {
+    feedbackEl.classList.remove('hidden');
+    feedbackEl.innerHTML = isCorrect
+      ? `<div class="rounded-xl p-4 flex items-center gap-3" style="background:rgba(5,150,105,0.2); border:2px solid rgba(52,211,153,0.5);">
+           <span class="text-3xl flex-shrink-0">✅</span>
+           <div><p class="font-bold text-green-400 text-sm">Você acertou!</p><p class="text-xs text-gray-300">Excelente decisão.</p></div>
+         </div>`
+      : `<div class="rounded-xl p-4 flex items-center gap-3" style="background:rgba(239,68,68,0.15); border:2px solid rgba(239,68,68,0.45);">
+           <span class="text-3xl flex-shrink-0">❌</span>
+           <div><p class="font-bold text-red-400 text-sm">Você errou.</p><p class="text-xs text-gray-300">A ação correta era: <strong>${correctLabel}</strong></p></div>
+         </div>`;
   }
+  document.getElementById('sim-analysis-inf')?.classList.remove('hidden');
+};
+
+window.setAnalysisTabInf = function(tab) {
+  ['explanation','ev','gto'].forEach(t => {
+    document.getElementById(`ana-inf-${t}`)?.classList.toggle('active', t === tab);
+    document.getElementById(`ana-inf-${t}-content`)?.classList.toggle('hidden', t !== tab);
+  });
 };
 
 // ── COMPLETE LESSON ───────────────────────────────────────────
@@ -517,12 +987,12 @@ function spawnConfetti() {
 
 window.closeCelebration = function() {
   document.getElementById('celebration-overlay').classList.add('hidden');
-  window.location.href = '/frontend/pages/dashboard.html';
+  window.location.href = '/pages/dashboard.html';
 };
 
 window.goNextLesson = function() {
-  if (nextLesson) window.location.href = `/frontend/pages/lesson.html?day=${nextLesson.day}`;
-  else window.location.href = '/frontend/pages/dashboard.html';
+  if (nextLesson) window.location.href = `/pages/lesson.html?day=${nextLesson.day}`;
+  else window.location.href = '/pages/dashboard.html';
 };
 
 // ── CHAT ──────────────────────────────────────────────────────
@@ -538,7 +1008,8 @@ window.sendChat = async function() {
   const msg   = input.value.trim();
   if (!msg) return;
   const msgs = document.getElementById('chat-messages');
-  msgs.innerHTML += `<div class="flex justify-end"><p class="text-sm px-3 py-2 rounded-lg max-w-xs" style="background:rgba(200,160,69,0.15);color:#c8a045;">${msg}</p></div>`;
+  const safeMsg = sanitizeAiData(msg);
+  msgs.innerHTML += `<div class="flex justify-end"><p class="text-sm px-3 py-2 rounded-lg max-w-xs" style="background:rgba(200,160,69,0.15);color:#c8a045;">${safeMsg}</p></div>`;
   input.value = ''; input.disabled = true;
   const typingId = 'typing-' + Date.now();
   msgs.innerHTML += `<div id="${typingId}" class="text-xs text-gray-500 animate-pulse">Coach digitando...</div>`;
@@ -546,10 +1017,13 @@ window.sendChat = async function() {
   try {
     const { reply } = await claudeApi.chat(msg, currentTopic?.title);
     document.getElementById(typingId)?.remove();
-    msgs.innerHTML += `<div class="flex gap-2 items-start"><span class="mt-1">🃏</span><p class="text-sm text-gray-300 leading-relaxed">${applyGlossary(reply)}</p></div>`;
+    const safeReply = sanitizeAiData(reply);
+    const replyHtml = safeReply.split('\n').filter(l => l.trim())
+      .map(l => `<p class="text-sm text-gray-300 leading-relaxed mb-1">${applyGlossary(l)}</p>`).join('');
+    msgs.innerHTML += `<div class="flex gap-2 items-start"><span class="mt-1 flex-shrink-0">🃏</span><div>${replyHtml}</div></div>`;
   } catch (err) {
     document.getElementById(typingId)?.remove();
-    msgs.innerHTML += `<p class="text-xs text-red-400">Erro: ${err.message}</p>`;
+    msgs.innerHTML += `<p class="text-xs text-red-400">Erro: ${sanitizeAiData(err.message)}</p>`;
   } finally {
     input.disabled = false; input.focus(); msgs.scrollTop = msgs.scrollHeight;
   }

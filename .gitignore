@@ -3,6 +3,7 @@ node_modules/
 
 # Arquivo com suas chaves reais — NUNCA versionar isso!
 .env
+.env.local
 firebase-service-account.json
 
 # Arquivos de sistema

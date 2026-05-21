@@ -14,7 +14,8 @@ import { verifyToken } from '../middleware/auth.js';
 
 const router = Router();
 
-// XP ganho por categoria de lição
+// XP ganho por categoria de lição.
+// ATENÇÃO: cópia espelhada em frontend/js/config.js — manter em sincronia.
 const XP_BY_CATEGORY = {
   MATH:     30,
   PREFLOP:  25,
@@ -44,8 +45,9 @@ router.get('/me', verifyToken, async (req, res) => {
       .get();
 
     const completedCount = completedSnap.data().count;
-    const totalLessons   = 90;
-    const percentComplete = Math.round((completedCount / totalLessons) * 100);
+    const totalLessons   = 91;
+    // Clampamos o numerador para nunca ultrapassar 100% na barra de progresso
+    const percentComplete = Math.round((Math.min(completedCount, totalLessons) / totalLessons) * 100);
 
     res.json({
       progress: {
@@ -74,8 +76,8 @@ router.post('/complete', verifyToken, async (req, res) => {
   if (!day || !category || !title) {
     return res.status(400).json({ error: 'day, category e title são obrigatórios.' });
   }
-  if (day < 1 || day > 90) {
-    return res.status(400).json({ error: 'day deve ser entre 1 e 90.' });
+  if (day < 1 || day > 91) {
+    return res.status(400).json({ error: 'day deve ser entre 1 e 91.' });
   }
   if (!XP_BY_CATEGORY[category]) {
     return res.status(400).json({ error: `Categoria inválida: ${category}` });
@@ -86,60 +88,65 @@ router.post('/complete', verifyToken, async (req, res) => {
   const lessonRef = userRef.collection('completedLessons').doc(`day_${day}`);
 
   try {
-    // Verifica se já foi concluída antes (evita XP duplicado)
-    const existing = await lessonRef.get();
-    if (existing.exists) {
-      return res.status(409).json({
-        error: 'Esta lição já foi concluída.',
-        completedAt: existing.data().completedAt,
+    // Transação garante idempotência contra cliques duplos / retries de rede:
+    // o read de existing + userSnap e os writes acontecem atomicamente, evitando
+    // que duas requisições concorrentes ambas passem pelo `existing.exists` e
+    // creditem XP em duplicidade.
+    const result = await db.runTransaction(async (tx) => {
+      const existing = await tx.get(lessonRef);
+      if (existing.exists) {
+        const err = new Error('ALREADY_COMPLETED');
+        err.completedAt = existing.data().completedAt;
+        throw err;
+      }
+
+      const userSnap = await tx.get(userRef);
+      const userData = userSnap.data() || {};
+
+      // Calcula o novo streak
+      // Se o último login foi ontem → incrementa; senão → reseta para 1
+      const lastLogin    = userData.lastLoginAt ? new Date(userData.lastLoginAt) : null;
+      const today        = new Date();
+      const yesterday    = new Date(today); yesterday.setDate(today.getDate() - 1);
+      const wasYesterday = lastLogin
+        && lastLogin.toDateString() === yesterday.toDateString();
+      const newStreak    = wasYesterday ? (userData.streak || 0) + 1 : 1;
+
+      const xpGained = XP_BY_CATEGORY[category];
+      const now      = new Date().toISOString();
+
+      tx.set(lessonRef, {
+        day,
+        category,
+        title,
+        xpGained,
+        completedAt: now,
       });
-    }
 
-    const xpGained   = XP_BY_CATEGORY[category];
-    const now        = new Date().toISOString();
-    const userSnap   = await userRef.get();
-    const userData   = userSnap.data() || {};
+      tx.update(userRef, {
+        totalXP:     (userData.totalXP || 0) + xpGained,
+        currentDay:  Math.max((userData.currentDay || 1), day + 1),
+        streak:      newStreak,
+        lastLoginAt: now,
+        updatedAt:   now,
+      });
 
-    // Calcula o novo streak
-    // Se o último login foi ontem → incrementa; senão → reseta para 1
-    const lastLogin  = userData.lastLoginAt ? new Date(userData.lastLoginAt) : null;
-    const today      = new Date();
-    const yesterday  = new Date(today); yesterday.setDate(today.getDate() - 1);
-    const wasYesterday = lastLogin
-      && lastLogin.toDateString() === yesterday.toDateString();
-    const newStreak = wasYesterday ? (userData.streak || 0) + 1 : 1;
-
-    // Usa uma transação batch para garantir que TUDO seja salvo junto
-    // (ou nada — evita inconsistência de dados)
-    const batch = db.batch();
-
-    // 1. Salva a lição concluída na sub-coleção do usuário
-    batch.set(lessonRef, {
-      day,
-      category,
-      title,
-      xpGained,
-      completedAt: now,
+      return { xpGained, newStreak, newTotalXP: (userData.totalXP || 0) + xpGained };
     });
-
-    // 2. Atualiza os dados do usuário
-    batch.update(userRef, {
-      totalXP:     (userData.totalXP || 0) + xpGained,
-      currentDay:  Math.max((userData.currentDay || 1), day + 1), // avança o dia
-      streak:      newStreak,
-      lastLoginAt: now,
-      updatedAt:   now,
-    });
-
-    await batch.commit();
 
     res.json({
-      message: `Lição ${day} concluída! +${xpGained} XP`,
-      xpGained,
-      newStreak,
-      newTotalXP: (userData.totalXP || 0) + xpGained,
+      message: `Lição ${day} concluída! +${result.xpGained} XP`,
+      xpGained:   result.xpGained,
+      newStreak:  result.newStreak,
+      newTotalXP: result.newTotalXP,
     });
   } catch (err) {
+    if (err.message === 'ALREADY_COMPLETED') {
+      return res.status(409).json({
+        error: 'Esta lição já foi concluída.',
+        completedAt: err.completedAt,
+      });
+    }
     console.error('Erro ao salvar progresso:', err);
     res.status(500).json({ error: 'Erro ao salvar progresso.' });
   }

@@ -31,17 +31,28 @@ export async function verifyToken(req, res, next) {
     // O Firebase verifica assinatura, expiração e revogação do token
     const decoded = await auth.verifyIdToken(idToken);
 
-    // Busca dados extras do usuário no Firestore (ex: role)
-    const userDoc = await db.collection('users').doc(decoded.uid).get();
-    const userData = userDoc.exists ? userDoc.data() : {};
-
-    // Anexa tudo em req.user — disponível para a próxima função da rota
-    req.user = {
-      uid:   decoded.uid,
-      email: decoded.email,
-      role:  userData.role || 'user', // padrão: usuário comum
-      name:  userData.name  || decoded.email,
-    };
+    if (decoded.role !== undefined) {
+      // Fast path: role está no custom claim do token — sem GET no Firestore
+      req.user = {
+        uid:   decoded.uid,
+        email: decoded.email,
+        role:  decoded.role,
+        name:  decoded.name || decoded.email,
+      };
+    } else {
+      // Fallback para usuários sem claim ainda (criados antes desta versão)
+      const userDoc = await db.collection('users').doc(decoded.uid).get();
+      const userData = userDoc.exists ? userDoc.data() : {};
+      req.user = {
+        uid:   decoded.uid,
+        email: decoded.email,
+        role:  userData.role || 'user',
+        name:  userData.name || decoded.email,
+      };
+      // Migração gradual: popula o claim para o próximo refresh do token
+      auth.setCustomUserClaims(decoded.uid, { role: req.user.role })
+        .catch(e => console.warn('setCustomUserClaims (migração) falhou:', e.message));
+    }
 
     next(); // Passa para a próxima função (a rota em si)
   } catch (err) {

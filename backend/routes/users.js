@@ -16,6 +16,17 @@ import { verifyToken, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
 
+// Sincroniza os custom claims do token com o estado atual do Firestore.
+// Deve ser chamado após qualquer mudança de role ou accessExpiresAt para garantir
+// que ambos os campos coexistam no claim (setCustomUserClaims sobrescreve tudo).
+async function syncClaims(uid) {
+  const doc = await db.collection('users').doc(uid).get();
+  const d = doc.data() || {};
+  const claims = { role: d.role || 'user' };
+  if (d.accessExpiresAt) claims.accessExpiresAt = Date.parse(d.accessExpiresAt);
+  await auth.setCustomUserClaims(uid, claims);
+}
+
 // ── POST /api/users/register ──────────────────────────────────
 // Chamado pelo frontend logo após o usuário se registrar no Firebase Auth.
 // Cria o documento do usuário no Firestore com dados iniciais.
@@ -181,10 +192,8 @@ router.patch('/:uid/role', verifyToken, requireAdmin, async (req, res) => {
   }
 
   try {
-    await Promise.all([
-      db.collection('users').doc(uid).update({ role, updatedAt: new Date().toISOString() }),
-      auth.setCustomUserClaims(uid, { role }),
-    ]);
+    await db.collection('users').doc(uid).update({ role, updatedAt: new Date().toISOString() });
+    await syncClaims(uid); // preserva accessExpiresAt no claim ao trocar role
     res.json({ message: `Role do usuário ${uid} alterada para '${role}'.` });
   } catch (err) {
     console.error('Erro ao alterar role:', err);
@@ -212,6 +221,59 @@ router.delete('/:uid', verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Erro ao deletar usuário:', err);
     res.status(500).json({ error: 'Erro ao remover usuário.' });
+  }
+});
+
+// ── PATCH /api/users/:uid/status (admin only) ─────────────────
+// Bloqueia ou desbloqueia um usuário via Firebase Auth.
+// O bloqueio é imediato: impede novo login e invalida o refresh do token.
+router.patch('/:uid/status', verifyToken, requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+  const { disabled } = req.body;
+
+  if (typeof disabled !== 'boolean') {
+    return res.status(400).json({ error: 'disabled deve ser boolean.' });
+  }
+  if (uid === req.user.uid) {
+    return res.status(400).json({ error: 'Você não pode bloquear sua própria conta.' });
+  }
+
+  try {
+    await Promise.all([
+      auth.updateUser(uid, { disabled }),
+      db.collection('users').doc(uid).update({ disabled, updatedAt: new Date().toISOString() }),
+    ]);
+    res.json({ message: disabled ? 'Usuário bloqueado.' : 'Usuário desbloqueado.' });
+  } catch (err) {
+    console.error('Erro ao alterar status:', err);
+    res.status(500).json({ error: 'Erro ao alterar status do usuário.' });
+  }
+});
+
+// ── PATCH /api/users/:uid/access (admin only) ─────────────────
+// Define ou remove o prazo de acesso de um usuário.
+// O limite é propagado via custom claims no próximo refresh do token (~1h).
+// Para bloqueio imediato, use /status em vez deste endpoint.
+router.patch('/:uid/access', verifyToken, requireAdmin, async (req, res) => {
+  const { uid } = req.params;
+  const { accessExpiresAt } = req.body; // ISO string ou null
+
+  if (accessExpiresAt != null) {
+    if (typeof accessExpiresAt !== 'string' || Number.isNaN(Date.parse(accessExpiresAt))) {
+      return res.status(400).json({ error: 'accessExpiresAt deve ser uma data ISO válida ou null.' });
+    }
+  }
+
+  try {
+    await db.collection('users').doc(uid).update({
+      accessExpiresAt: accessExpiresAt ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+    await syncClaims(uid); // propaga para custom claims (role + accessExpiresAt)
+    res.json({ message: accessExpiresAt ? `Acesso válido até ${accessExpiresAt}.` : 'Prazo de acesso removido.' });
+  } catch (err) {
+    console.error('Erro ao definir prazo de acesso:', err);
+    res.status(500).json({ error: 'Erro ao definir prazo de acesso.' });
   }
 });
 

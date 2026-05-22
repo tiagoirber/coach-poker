@@ -41,9 +41,9 @@ npx firebase deploy --only hosting             # só frontend (mais rápido)
 npx firebase deploy --only functions           # só backend (Cloud Function)
 npx firebase deploy --only functions,hosting   # tudo
 
-# Testes: ainda não há suíte formal — adicionar quando houver
-# Lint: ainda não há — adicionar quando houver
-# Typecheck: ainda não há (JavaScript puro, sem TypeScript)
+npm test                                       # Vitest — backend/**/*.test.js
+npm run lint                                   # ESLint flat config v9
+# Typecheck: não há (JavaScript puro, sem TypeScript)
 ```
 
 ## 3. Estrutura de pastas
@@ -111,13 +111,26 @@ firestore.rules           → regras de segurança (NÃO TOCAR sem avisar)
 
 - Para tarefas que tocam 3+ arquivos ou qualquer golden path: entrar em `/plan` e aguardar aprovação antes de codar.
 - Antes de mudanças grandes: verificar se o working tree está limpo. Sugerir `git stash` ou nova branch se houver risco de rollback.
-- Após qualquer mudança, validar:
-  1. A feature alterada funciona (testar no browser local ou em produção).
-  2. Os golden paths da seção 4 continuam íntegros — cheklist mental.
-  3. Testes: ainda não há suíte — checar manualmente os golden paths.
-  4. Lint: ainda não há.
 - Não fazer commits automaticamente. O usuário revisa e commita.
 - Nunca dar push em main.
+
+### Checklist obrigatório antes de declarar uma tarefa concluída
+
+Claude **não deve** dizer "pronto" nem propor commit sem passar por este checklist:
+
+- [ ] **Testes automatizados**: `npm test` passa sem falhas (`backend/**/*.test.js` via Vitest)
+- [ ] **Lint**: `npm run lint` sem erros (warns de `no-unused-vars` são aceitáveis; erros de `no-undef` não)
+- [ ] **Feature alterada funciona**: testar no browser local (`npm run dev` → `http://localhost:3001`) ou em produção
+- [ ] **Golden paths intactos** (checar mentalmente os 6 da seção 4 — qualquer dúvida, testar no browser):
+  - Login Google → dashboard
+  - Lição: teoria/quiz/simulação em ≤ 15s, sem "formato inválido"
+  - Cache: 1ª visita busca Firestore/IA; 2ª visita gera novo conteúdo
+  - Progressão bloqueada: Feynman → Quiz Fácil → Quiz Médio → ...
+  - Concluir lição → XP + celebração + dashboard atualizado
+  - Dashboard: 90 dias, dias marcados, XP e streak corretos
+- [ ] **Sem erros no console do browser** nas páginas afetadas
+
+Se `npm` não estiver disponível (computador do trabalho), registrar explicitamente quais itens ficaram pendentes e adicionar à seção de ações pendentes do CLAUDE.md.
 
 ## 8. O que NÃO fazer (regras duras de anti-retrocesso)
 
@@ -167,15 +180,7 @@ firestore.rules           → regras de segurança (NÃO TOCAR sem avisar)
 - Testes Vitest: `backend/utils/extractJson.js` (util extraído de `claude.js`), `backend/utils/extractJson.test.js` (11 testes), `backend/routes/claude.test.js`, `backend/routes/progress.test.js`.
 - Leaderboard: já estava implementado (backend + frontend) — só verificação visual necessária.
 
-**⚠️ AÇÃO PENDENTE — rodar em casa (requer Node.js):**
-```bash
-cd "C:\Users\irber\OneDrive\1) APPs\Claude Code\Poker Coach 90d"
-npm install        # instala eslint, globals, vitest, supertest (devDeps novas)
-npm test           # deve rodar 15+ testes e passar verde
-npx eslint .       # lint — pode ter warns de no-unused-vars no código existente (não são erros)
-```
-
-**Pendente / próximos passos possíveis:**
+**Próximos passos possíveis:**
 - Domínio customizado (configuração manual no Firebase Console, não é código).
 - GitHub Actions para rodar `npm test` automaticamente no push (CI).
 - Possíveis melhorias futuras: Firestore emulator para testes de integração, página de perfil com foto do Google, leaderboard com posição própria além do top 10.

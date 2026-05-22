@@ -92,7 +92,7 @@ async function loadLeaderboard() {
       const isMe = entry.uid === uid;
       const row  = document.createElement('div');
       row.className = `flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors ${isMe ? 'ring-1 ring-yellow-500/30' : ''}`;
-      row.style.background = isMe ? 'rgba(200,160,69,0.08)' : '#111412';
+      row.style.background = isMe ? 'rgba(200,160,69,0.08)' : '#112413';
 
       const medal = document.createElement('span');
       medal.className = 'text-lg w-6 text-center';
@@ -145,7 +145,7 @@ function renderCurriculum() {
 
     return `
       <div class="flex items-center gap-3 rounded-lg px-4 py-3 transition-colors cursor-pointer hover:bg-white/5"
-           style="background:#111412; border:1px solid ${done ? 'rgba(5,150,105,0.3)' : isNext ? 'rgba(200,160,69,0.2)' : 'rgba(255,255,255,0.04)'};"
+           style="background:#112413; border:1px solid ${done ? 'rgba(5,150,105,0.3)' : isNext ? 'rgba(200,160,69,0.2)' : 'rgba(255,255,255,0.04)'};"
            onclick="openLesson(${topic.day})">
 
         <!-- Ícone de status -->

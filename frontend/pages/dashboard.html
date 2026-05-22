@@ -4,12 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard — Poker Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Epilogue:wght@900&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: { extend: { colors: {
-        poker: { bg:'#0a0b0a', surface:'#111412', card:'#161a16', gold:'#c8a045' }
-      }}}
+      theme: { extend: {
+        colors: {
+          poker: { bg:'#0d1f0f', surface:'#112413', card:'#0e1c10', border:'#1e3d1e',
+                   accent:'#2d6e2d', ink:'#e8f5e8', muted:'#7ec87e', faint:'#4a7a4a', gold:'#c8a045' }
+        },
+        fontFamily: { display:['Epilogue','sans-serif'], body:['Space Grotesk','sans-serif'] }
+      }}
     }
   </script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -22,11 +29,11 @@
   .bot-nav-btn { display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 16px; color:#6b7280; font-size:11px; font-weight:600; text-decoration:none; transition:color .15s; border-top:2px solid transparent; }
   .bot-nav-btn.active, .bot-nav-btn:hover { color:#c8a045; border-top-color:#c8a045; }
 </style>
-<body class="min-h-screen pb-20 text-white" style="background:#0a0b0a;">
+<body class="min-h-screen pb-20 text-white" style="background:#0d1f0f; font-family:'Space Grotesk',sans-serif;">
 
   <!-- NAVBAR -->
   <nav class="sticky top-0 z-50 border-b border-white/5"
-       style="background:#111412;">
+       style="background:#112413;">
     <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
 
       <div class="flex items-center gap-2">
@@ -43,7 +50,7 @@
 
           <!-- Dropdown -->
           <div class="absolute right-0 mt-2 w-48 rounded-lg overflow-hidden shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all"
-               style="background:#161a16; border:1px solid rgba(255,255,255,0.08);">
+               style="background:#0e1c10; border:1px solid rgba(255,255,255,0.08);">
             <p id="nav-email" class="px-4 py-2 text-xs text-gray-400 border-b border-white/5 truncate"></p>
             <a href="/pages/profile.html"
                class="block px-4 py-2 text-sm text-gray-300 hover:bg-white/5">Meu Perfil</a>
@@ -116,17 +123,18 @@
           <!-- Filtro por semana -->
           <select id="week-filter" onchange="filterWeek(this.value)"
                   class="text-sm px-3 py-1.5 rounded-lg outline-none"
-                  style="background:#161a16; border:1px solid rgba(255,255,255,0.08); color:#9ca3af;">
+                  style="background:#0e1c10; border:1px solid rgba(255,255,255,0.08); color:#9ca3af;">
             <option value="all">Todas as semanas</option>
           </select>
+
         </div>
 
         <!-- Lista de lições (preenchida via JS) -->
         <div id="lessons-list" class="space-y-2">
           <!-- Skeleton loader enquanto carrega -->
-          <div class="animate-pulse rounded-lg h-16" style="background:#111412;"></div>
-          <div class="animate-pulse rounded-lg h-16" style="background:#111412;"></div>
-          <div class="animate-pulse rounded-lg h-16" style="background:#111412;"></div>
+          <div class="animate-pulse rounded-lg h-16" style="background:#112413;"></div>
+          <div class="animate-pulse rounded-lg h-16" style="background:#112413;"></div>
+          <div class="animate-pulse rounded-lg h-16" style="background:#112413;"></div>
         </div>
       </div>
 
@@ -134,9 +142,9 @@
       <div>
         <h3 class="font-semibold mb-4">🏆 Ranking</h3>
         <div id="leaderboard" class="space-y-2">
-          <div class="animate-pulse rounded-lg h-12" style="background:#111412;"></div>
-          <div class="animate-pulse rounded-lg h-12" style="background:#111412;"></div>
-          <div class="animate-pulse rounded-lg h-12" style="background:#111412;"></div>
+          <div class="animate-pulse rounded-lg h-12" style="background:#112413;"></div>
+          <div class="animate-pulse rounded-lg h-12" style="background:#112413;"></div>
+          <div class="animate-pulse rounded-lg h-12" style="background:#112413;"></div>
         </div>
       </div>
 
@@ -147,7 +155,7 @@
   <div id="modal-complete" class="fixed inset-0 z-50 hidden items-center justify-center"
        style="background:rgba(0,0,0,0.7);">
     <div class="rounded-xl p-8 text-center max-w-sm mx-4"
-         style="background:#161a16; border:1px solid rgba(200,160,69,0.3);">
+         style="background:#0e1c10; border:1px solid rgba(200,160,69,0.3);">
       <div class="text-5xl mb-3">🎉</div>
       <h3 class="text-xl font-bold mb-2">Lição concluída!</h3>
       <p id="modal-xp" class="mb-4" style="color:#c8a045;"></p>

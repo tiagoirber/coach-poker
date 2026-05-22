@@ -59,11 +59,11 @@ window.switchTab = function(tab) {
   const tabRegister = document.getElementById('tab-register');
 
   if (isLogin) {
-    tabLogin.style.cssText    = 'background:#c8a045; color:#000;';
-    tabRegister.style.cssText = 'background:transparent; color:#6b7280;';
+    tabLogin.style.cssText    = 'background:#1a3a1a; color:#7ec87e; font-size:12px; letter-spacing:1px; text-transform:uppercase;';
+    tabRegister.style.cssText = 'background:transparent; color:#3d6b3d; font-size:12px; letter-spacing:1px; text-transform:uppercase;';
   } else {
-    tabRegister.style.cssText = 'background:#c8a045; color:#000;';
-    tabLogin.style.cssText    = 'background:transparent; color:#6b7280;';
+    tabRegister.style.cssText = 'background:#1a3a1a; color:#7ec87e; font-size:12px; letter-spacing:1px; text-transform:uppercase;';
+    tabLogin.style.cssText    = 'background:transparent; color:#3d6b3d; font-size:12px; letter-spacing:1px; text-transform:uppercase;';
   }
 };
 

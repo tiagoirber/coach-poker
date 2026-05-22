@@ -194,12 +194,12 @@ async function checkIfCompleted() {
 // ── Load lesson ───────────────────────────────────────────────
 async function loadLesson() {
   const { day, title, description, category } = currentTopic;
-  const visitKey  = `lesson_visits_${day}`;
+  const visitKey   = `lesson_visits_${day}`;
   const visitCount = parseInt(localStorage.getItem(visitKey) || '0', 10);
   const forceNew   = visitCount > 0;
   const cacheKey   = `lesson_${LESSON_CACHE_VER}_${day}`;
 
-  // Na 1ª visita tenta o cache local antes de ir ao servidor
+  // 1ª visita: tenta cache local (objeto completo com quiz+sims)
   if (!forceNew) {
     const cached = localStorage.getItem(cacheKey);
     if (cached) {
@@ -211,16 +211,28 @@ async function loadLesson() {
       } catch {}
     }
   } else {
-    // 2ª visita em diante: descarta cache local para garantir conteúdo novo
     localStorage.removeItem(cacheKey);
   }
 
+  // Fase 1: teoria rápida (~10s)
   try {
     const { lesson } = await claudeApi.getLesson(day, title, description, category, forceNew);
     lessonData = sanitizeAiData(lesson);
-    localStorage.setItem(cacheKey, JSON.stringify(lesson)); // salva raw no cache; sanitiza ao ler
     localStorage.setItem(visitKey, visitCount + 1);
-    renderLesson();
+
+    document.getElementById('loading-state').classList.add('hidden');
+    document.getElementById('lesson-content').classList.remove('hidden');
+    renderTheory();
+    document.getElementById('tip-text').innerHTML = applyGlossary(lessonData.tip || '');
+    // Placeholder nos painéis de exercício — bloqueados por Feynman de qualquer forma
+    ['quiz-easy', 'quiz-medium', 'quiz-hard', 'sim-easy', 'sim-medium', 'sim-hard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = '<p class="text-gray-500 animate-pulse text-sm py-6 text-center">⏳ Gerando exercícios...</p>';
+    });
+    showStep(currentStep);
+
+    // Fase 2: exercícios em background
+    loadExercises(day, title, description, category, forceNew, cacheKey);
   } catch (err) {
     document.getElementById('loading-state').innerHTML = `
       <div class="text-center py-20">
@@ -229,12 +241,62 @@ async function loadLesson() {
         <p class="text-gray-500 text-sm mb-6">${err.message}</p>
         <button onclick="location.reload()"
                 class="px-6 py-2 rounded-lg text-sm font-semibold"
-                style="background:#161a16; border:1px solid rgba(255,255,255,0.1); color:#9ca3af;">
+                style="background:#0e1c10; border:1px solid rgba(255,255,255,0.1); color:#9ca3af;">
           Tentar novamente
         </button>
       </div>`;
   }
 }
+
+// ── Load exercises (fase 2, background) ──────────────────────
+async function loadExercises(day, title, description, category, forceNew, cacheKey) {
+  try {
+    const { exercises } = await claudeApi.getLessonExercises(day, title, description, category, forceNew);
+    lessonData = { ...lessonData, ...sanitizeAiData(exercises) };
+
+    renderQuizCard('easy');
+    renderQuizCard('medium');
+    renderQuizCard('hard');
+    renderSimLevel('easy');
+    renderSimLevel('medium');
+    renderSimLevel('hard');
+
+    // Se o usuário já avançou para um passo de exercício, re-popula o painel ativo
+    const exerciseSteps = new Set(['quiz-easy','quiz-medium','quiz-hard','sim-easy','sim-medium','sim-hard','training']);
+    if (exerciseSteps.has(currentStep)) showStep(currentStep);
+
+    // Salva objeto completo (teoria + exercícios) no cache local
+    localStorage.setItem(cacheKey, JSON.stringify(lessonData));
+  } catch (err) {
+    console.error('Erro ao gerar exercícios:', err.message);
+    const errHtml = `
+      <div class="text-center py-6">
+        <p class="text-red-400 text-sm mb-3">⚠️ Erro ao gerar exercícios</p>
+        <button onclick="window.loadExercisesRetry()"
+                class="px-4 py-2 rounded-lg text-xs font-semibold"
+                style="background:#0e1c10; border:1px solid rgba(255,255,255,0.1); color:#9ca3af;">
+          Tentar novamente
+        </button>
+      </div>`;
+    ['quiz-easy', 'quiz-medium', 'quiz-hard', 'sim-easy', 'sim-medium', 'sim-hard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = errHtml;
+    });
+  }
+}
+
+window.loadExercisesRetry = function() {
+  const { day, title, description, category } = currentTopic;
+  const visitKey   = `lesson_visits_${day}`;
+  const visitCount = parseInt(localStorage.getItem(visitKey) || '0', 10);
+  const forceNew   = visitCount > 0;
+  const cacheKey   = `lesson_${LESSON_CACHE_VER}_${day}`;
+  ['quiz-easy', 'quiz-medium', 'quiz-hard', 'sim-easy', 'sim-medium', 'sim-hard'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<p class="text-gray-500 animate-pulse text-sm py-6 text-center">⏳ Gerando exercícios...</p>';
+  });
+  loadExercises(day, title, description, category, forceNew, cacheKey);
+};
 
 function renderLesson() {
   document.getElementById('loading-state').classList.add('hidden');
@@ -262,9 +324,9 @@ function parseCards(str) {
 function cardHtml(rank, suit) {
   const isRed = suit === '♥' || suit === '♦';
   return `<div class="pcard ${isRed ? 'red' : 'blk'}">
-    <span class="r">${rank}</span>
-    <span class="s">${suit}</span>
-    <span class="rb">${rank}</span>
+    <div class="pc-tl"><span class="pc-rank">${rank}</span><span class="pc-suit-sm">${suit}</span></div>
+    <span class="pc-center">${suit}</span>
+    <div class="pc-br"><span class="pc-rank">${rank}</span><span class="pc-suit-sm">${suit}</span></div>
   </div>`;
 }
 
@@ -275,31 +337,71 @@ function cardsHtml(str) {
   return cards.map(c => cardHtml(c.rank, c.suit)).join('');
 }
 
+// Renderiza 2 hole cards em leque (fan effect)
+function heroCardsHtml(str) {
+  const cards = parseCards(str);
+  if (!cards.length) return str ? `<span class="text-white text-sm font-mono">${str}</span>` : '';
+  if (cards.length === 1) return cardHtml(cards[0].rank, cards[0].suit);
+  const [c1, c2] = cards;
+  return `<span style="display:inline-block;transform:rotate(-9deg) translateY(7px);margin-right:-20px;z-index:1;position:relative;">${cardHtml(c1.rank, c1.suit)}</span><span style="display:inline-block;transform:rotate(9deg) translateY(7px);z-index:2;position:relative;">${cardHtml(c2.rank, c2.suit)}</span>`;
+}
+
 function renderPokerTable(sim) {
-  const heroCards  = cardsHtml(sim.heroHand);
-  const boardCards = cardsHtml(sim.board);
-  const boardStr   = sim.board || '?';
-  const hasBoard   = parseCards(sim.board).length > 0;
+  const hasBoard = parseCards(sim.board).length > 0;
+  const boardDisplay = hasBoard
+    ? cardsHtml(sim.board)
+    : `<div class="pcard-back" style="opacity:0.45;"></div>
+       <div class="pcard-back" style="opacity:0.45;"></div>
+       <div class="pcard-back" style="opacity:0.45;"></div>`;
 
   return `
-    <div class="rounded-xl p-4 mb-4 relative overflow-hidden"
-         style="background:linear-gradient(135deg,#14532d 0%,#166534 50%,#14532d 100%); border:3px solid #78350f; box-shadow:inset 0 0 30px rgba(0,0,0,0.4);">
-      <div class="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <p class="text-xs font-bold text-yellow-300 mb-2 uppercase tracking-wider">Sua Mão</p>
-          <div class="flex gap-1.5">${heroCards}</div>
-          <p class="text-xs text-green-300/70 mt-1.5">${sim.position}</p>
-        </div>
-        <div class="text-center">
-          <div class="text-xs text-white/40 mb-1">POT</div>
-          <div class="text-yellow-400 font-black text-xl">${sim.pot}</div>
-        </div>
-        <div>
-          <p class="text-xs font-bold text-green-300 mb-2 uppercase tracking-wider">Board</p>
-          <div class="flex gap-1.5 flex-wrap">
-            ${hasBoard ? boardCards : '<div class="pcard-back"></div><div class="pcard-back"></div><div class="pcard-back"></div>'}
+    <div class="relative mb-5 select-none"
+         style="border-radius:36px;
+                background:linear-gradient(160deg,#4a2800 0%,#6b3e10 40%,#4a2800 70%,#2e1600 100%);
+                padding:10px;
+                box-shadow:0 24px 64px rgba(0,0,0,0.85), 0 0 0 1px rgba(255,200,120,0.08), inset 0 1px 0 rgba(255,200,120,0.15);">
+      <div class="relative overflow-hidden"
+           style="border-radius:28px;
+                  min-height:270px;
+                  background:radial-gradient(ellipse 80% 65% at 50% 45%, #27723a 0%, #1b5229 40%, #0e3318 72%, #061209 100%);
+                  padding:20px 18px;">
+        <div class="absolute inset-0 pointer-events-none"
+             style="border-radius:28px;
+                    background:repeating-linear-gradient(0deg,transparent,transparent 4px,rgba(255,255,255,0.012) 4px,rgba(255,255,255,0.012) 5px);
+                    opacity:0.35;"></div>
+        <div class="absolute inset-0 pointer-events-none"
+             style="border-radius:28px;
+                    border:1px solid rgba(255,255,255,0.06);
+                    box-shadow:inset 0 0 60px rgba(0,0,0,0.45);"></div>
+        <div class="flex flex-col items-center mb-4">
+          <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.22);">${sim.villainPosition || 'Vilão'}</p>
+          <div style="position:relative; width:92px; height:76px; margin:0 auto;">
+            <div class="pcard-back" style="position:absolute; left:0; top:0; transform:rotate(-10deg); transform-origin:50% 100%;"></div>
+            <div class="pcard-back" style="position:absolute; right:0; top:0; transform:rotate(10deg); transform-origin:50% 100%;"></div>
           </div>
-          ${hasBoard ? `<p class="text-xs text-white/40 mt-1.5">${boardStr}</p>` : ''}
+        </div>
+        <div class="flex flex-col items-center gap-2 my-1">
+          <div class="flex gap-1.5 flex-wrap justify-center">${boardDisplay}</div>
+          <div class="text-center rounded-xl px-4 py-1.5"
+               style="background:rgba(0,0,0,0.50); border:1px solid rgba(255,255,255,0.09);">
+            <div class="text-xs uppercase tracking-wider mb-0.5" style="color:rgba(255,255,255,0.3);">Pote</div>
+            <div class="font-black text-2xl" style="color:#fbbf24;">${sim.pot}</div>
+          </div>
+        </div>
+        <div class="flex items-end justify-between mt-4">
+          <div class="flex flex-col items-center">
+            <div style="display:inline-flex; align-items:flex-end;">${heroCardsHtml(sim.heroHand)}</div>
+            <div class="flex items-center gap-1.5 mt-2">
+              <div class="w-2 h-2 rounded-full" style="background:#fbbf24; box-shadow:0 0 6px #fbbf24;"></div>
+              <p class="text-xs font-bold tracking-wider uppercase" style="color:#fbbf24;">${sim.position}</p>
+              <span class="text-xs" style="color:rgba(255,255,255,0.28);">— Você</span>
+            </div>
+          </div>
+          ${sim.stack ? `
+          <div class="text-right">
+            <div class="text-xs uppercase" style="color:rgba(255,255,255,0.22);">Stack</div>
+            <div class="text-sm font-bold" style="color:rgba(255,255,255,0.50);">${sim.stack}</div>
+          </div>` : ''}
         </div>
       </div>
     </div>`;
@@ -348,9 +450,6 @@ function renderSimLevel(level) {
   if (!sim) { container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
 
   const analysis   = sim.analysis || {};
-  const heroCards  = cardsHtml(sim.heroHand);
-  const boardParsed = parseCards(sim.board);
-  const hasBoard   = boardParsed.length > 0;
 
   // Streets summary for the collapsible
   const streetsSummary = (sim.streets || []).map(st => `
@@ -359,13 +458,6 @@ function renderSimLevel(level) {
       <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
     </div>`).join('');
 
-  // Board cards (or face-down placeholders)
-  const boardDisplay = hasBoard
-    ? cardsHtml(sim.board)
-    : `<div class="pcard-back" style="opacity:0.5;"></div>
-       <div class="pcard-back" style="opacity:0.5;"></div>
-       <div class="pcard-back" style="opacity:0.5;"></div>`;
-
   // Narrative paragraphs
   const narrativeText = sim.narrative || sim.situation || '';
   const narrativeHtml = narrativeText.split('\n').filter(Boolean)
@@ -373,55 +465,7 @@ function renderSimLevel(level) {
 
   container.innerHTML = `
 
-    <!-- ══ MESA DE POKER ══ -->
-    <div class="relative rounded-2xl mb-5 overflow-hidden select-none"
-         style="background:radial-gradient(ellipse at 50% 40%, #1f6b30 0%, #0f4019 55%, #071a09 100%);
-                border:4px solid #6b3e0a;
-                box-shadow:inset 0 0 60px rgba(0,0,0,0.55), 0 8px 32px rgba(0,0,0,0.7);
-                min-height:300px; padding:25px 20px;">
-
-      <!-- Linha decorativa da mesa -->
-      <div class="absolute inset-4 rounded-2xl pointer-events-none"
-           style="border:2px solid rgba(255,255,255,0.06);"></div>
-
-      <!-- VILLAIN (topo) -->
-      <div class="flex flex-col items-center mb-3">
-        <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.3);">
-          ${sim.villainPosition || 'Vilão'}
-        </p>
-        <div class="flex gap-1.5">
-          <div class="pcard-back"></div>
-          <div class="pcard-back"></div>
-        </div>
-      </div>
-
-      <!-- BOARD + POT (centro) -->
-      <div class="flex items-center justify-center gap-6 my-4">
-        <div class="flex gap-1.5 flex-wrap justify-center">${boardDisplay}</div>
-        <div class="text-center rounded-xl px-4 py-2 flex-shrink-0"
-             style="background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.08);">
-          <div class="text-xs uppercase tracking-wider mb-0.5" style="color:rgba(255,255,255,0.35);">Pote</div>
-          <div class="font-black text-2xl" style="color:#fbbf24;">${sim.pot}</div>
-        </div>
-      </div>
-
-      <!-- HERO (base) -->
-      <div class="flex items-end justify-between mt-3">
-        <div class="flex flex-col items-center">
-          <div class="flex gap-1.5">${heroCards}</div>
-          <div class="flex items-center gap-1.5 mt-2">
-            <div class="w-2.5 h-2.5 rounded-full" style="background:#fbbf24; box-shadow:0 0 6px #fbbf24;"></div>
-            <p class="text-xs font-bold tracking-wider uppercase" style="color:#fbbf24;">${sim.position}</p>
-            <span class="text-xs" style="color:rgba(255,255,255,0.3);">— Você</span>
-          </div>
-        </div>
-        ${sim.stack ? `
-        <div class="text-right">
-          <div class="text-xs uppercase" style="color:rgba(255,255,255,0.25);">Stack</div>
-          <div class="text-sm font-bold" style="color:rgba(255,255,255,0.55);">${sim.stack}</div>
-        </div>` : ''}
-      </div>
-    </div>
+    ${renderPokerTable(sim)}
 
     <!-- ══ COMO A MÃO SE DESENVOLVEU ══ -->
     <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
@@ -715,7 +759,7 @@ window.submitFeynman = function() {
     </div>`;
   section.style.background = 'rgba(5,150,105,0.08)';
   section.style.borderColor = 'rgba(52,211,153,0.2)';
-  advanceStep('feynman');
+  window.advanceStep('feynman');
 };
 
 // ── INFINITE TRAINING ─────────────────────────────────────────
@@ -771,19 +815,12 @@ window.startInfiniteHand = async function(mode) {
 function renderInfiniteHand(sim, topicTitle, mode) {
   const exEl       = document.getElementById('infinite-hand');
   const analysis   = sim.analysis || {};
-  const heroCards  = cardsHtml(sim.heroHand);
-  const hasBoard   = parseCards(sim.board).length > 0;
 
   const streetsSummary = (sim.streets || []).map(st => `
     <div class="flex gap-2 text-xs leading-relaxed">
       <span class="font-bold whitespace-nowrap" style="color:#c8a045;">${st.name}:</span>
       <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
     </div>`).join('');
-
-  const boardDisplay = hasBoard ? cardsHtml(sim.board)
-    : `<div class="pcard-back" style="opacity:0.5;"></div>
-       <div class="pcard-back" style="opacity:0.5;"></div>
-       <div class="pcard-back" style="opacity:0.5;"></div>`;
 
   const narrativeHtml = (sim.narrative || sim.situation || '').split('\n').filter(Boolean)
     .map(p => `<p>${applyGlossary(p)}</p>`).join('');
@@ -800,36 +837,7 @@ function renderInfiniteHand(sim, topicTitle, mode) {
       <span class="text-xs font-bold ml-auto px-2 py-0.5 rounded" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
     </div>
 
-    <div class="relative rounded-2xl mb-5 overflow-hidden select-none"
-         style="background:radial-gradient(ellipse at 50% 40%, #1f6b30 0%, #0f4019 55%, #071a09 100%);
-                border:4px solid #6b3e0a;
-                box-shadow:inset 0 0 60px rgba(0,0,0,0.55), 0 8px 32px rgba(0,0,0,0.7);
-                min-height:300px; padding:25px 20px;">
-      <div class="absolute inset-4 rounded-2xl pointer-events-none" style="border:2px solid rgba(255,255,255,0.06);"></div>
-      <div class="flex flex-col items-center mb-3">
-        <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.3);">${sim.villainPosition || 'Vilão'}</p>
-        <div class="flex gap-1.5"><div class="pcard-back"></div><div class="pcard-back"></div></div>
-      </div>
-      <div class="flex items-center justify-center gap-6 my-4">
-        <div class="flex gap-1.5 flex-wrap justify-center">${boardDisplay}</div>
-        <div class="text-center rounded-xl px-4 py-2 flex-shrink-0"
-             style="background:rgba(0,0,0,0.45); border:1px solid rgba(255,255,255,0.08);">
-          <div class="text-xs uppercase tracking-wider mb-0.5" style="color:rgba(255,255,255,0.35);">Pote</div>
-          <div class="font-black text-2xl" style="color:#fbbf24;">${sim.pot}</div>
-        </div>
-      </div>
-      <div class="flex items-end justify-between mt-3">
-        <div class="flex flex-col items-center">
-          <div class="flex gap-1.5">${heroCards}</div>
-          <div class="flex items-center gap-1.5 mt-2">
-            <div class="w-2.5 h-2.5 rounded-full" style="background:#fbbf24; box-shadow:0 0 6px #fbbf24;"></div>
-            <p class="text-xs font-bold tracking-wider uppercase" style="color:#fbbf24;">${sim.position}</p>
-            <span class="text-xs" style="color:rgba(255,255,255,0.3);">— Você</span>
-          </div>
-        </div>
-        ${sim.stack ? `<div class="text-right"><div class="text-xs uppercase" style="color:rgba(255,255,255,0.25);">Stack</div><div class="text-sm font-bold" style="color:rgba(255,255,255,0.55);">${sim.stack}</div></div>` : ''}
-      </div>
-    </div>
+    ${renderPokerTable(sim)}
 
     <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
       <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;"><span>📖</span> Como a Mão se Desenvolveu</h3>

@@ -4,12 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lição — Poker Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Epilogue:wght@900&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: { extend: { colors: {
-        poker: { bg:'#0a0b0a', surface:'#111412', card:'#161a16', gold:'#c8a045' }
-      }}}
+      theme: { extend: {
+        colors: {
+          poker: { bg:'#0d1f0f', surface:'#112413', card:'#0e1c10', border:'#1e3d1e',
+                   accent:'#2d6e2d', ink:'#e8f5e8', muted:'#7ec87e', faint:'#4a7a4a', gold:'#c8a045' }
+        },
+        fontFamily: { display:['Epilogue','sans-serif'], body:['Space Grotesk','sans-serif'] }
+      }}
     }
   </script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -25,19 +32,30 @@
     .celebrate { animation: celebrate .6s ease forwards; }
     @keyframes confetti-fall { to { transform: translateY(110vh) rotate(720deg); opacity:0; } }
 
-    /* Poker Cards (+25% — escala visual da mesa) */
+    /* Poker Cards */
     .pcard {
       display:inline-flex; flex-direction:column; align-items:center; justify-content:center;
-      width:50px; height:70px; background:white; border-radius:6px;
-      border:1.5px solid #e5e7eb; box-shadow:0 3px 8px rgba(0,0,0,0.5);
+      width:70px; height:98px;
+      background:linear-gradient(150deg,#ffffff 0%,#f2ede4 100%);
+      border-radius:9px; border:1px solid rgba(0,0,0,0.18);
+      box-shadow:0 10px 28px rgba(0,0,0,0.75), 0 2px 5px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.95);
       position:relative; font-family:Georgia,serif; flex-shrink:0; user-select:none;
     }
-    .pcard .r { position:absolute; top:4px; left:6px; font-size:14px; font-weight:900; line-height:1; }
-    .pcard .rb { position:absolute; bottom:4px; right:6px; font-size:14px; font-weight:900; line-height:1; transform:rotate(180deg); }
-    .pcard .s { font-size:23px; line-height:1; }
+    .pcard .pc-tl { position:absolute; top:5px; left:7px; display:flex; flex-direction:column; align-items:flex-start; line-height:1; gap:1px; }
+    .pcard .pc-br { position:absolute; bottom:5px; right:7px; display:flex; flex-direction:column; align-items:flex-end; line-height:1; gap:1px; transform:rotate(180deg); }
+    .pcard .pc-rank { font-size:18px; font-weight:900; line-height:1; }
+    .pcard .pc-suit-sm { font-size:11px; line-height:1; }
+    .pcard .pc-center { font-size:36px; line-height:1; }
     .pcard.red { color:#dc2626; }
-    .pcard.blk { color:#1e293b; }
-    .pcard-back { width:50px;height:70px;border-radius:6px;background:linear-gradient(135deg,#1e3a5f,#1e3a5f);border:2px solid #3b82f6;box-shadow:0 3px 8px rgba(0,0,0,0.5);flex-shrink:0; }
+    .pcard.blk { color:#1a1a2e; }
+    .pcard-back {
+      width:70px; height:98px; border-radius:9px; flex-shrink:0;
+      background:
+        repeating-linear-gradient(45deg,transparent,transparent 5px,rgba(255,255,255,0.05) 5px,rgba(255,255,255,0.05) 10px),
+        linear-gradient(135deg,#1e40af 0%,#1e3a8a 55%,#172554 100%);
+      border:2px solid rgba(147,197,253,0.5);
+      box-shadow:0 10px 28px rgba(0,0,0,0.75), 0 2px 5px rgba(0,0,0,0.5);
+    }
 
     /* Glossary tooltips */
     .gl-term {
@@ -93,7 +111,7 @@
 
     /* Feynman */
     .feynman-ta {
-      width:100%; background:#0d0f0d; border:1px solid rgba(255,255,255,0.08); border-radius:8px;
+      width:100%; background:#0a1a0b; border:1px solid rgba(255,255,255,0.08); border-radius:8px;
       color:#e5e7eb; padding:12px; font-size:13px; resize:vertical; min-height:80px;
       outline:none; font-family:inherit; line-height:1.5;
     }
@@ -125,7 +143,7 @@
       position:sticky;
       top:56px;
       z-index:40;
-      background:#0a0b0a;
+      background:#0d1f0f;
       padding:10px 16px 8px;
       margin:0 -16px 8px;
       border-bottom:1px solid rgba(255,255,255,0.05);
@@ -142,10 +160,10 @@
   </style>
 </head>
 
-<body class="min-h-screen text-white pb-20" style="background:#0a0b0a;">
+<body class="min-h-screen text-white pb-20" style="background:#0d1f0f; font-family:'Space Grotesk',sans-serif;">
 
   <!-- Navbar -->
-  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
+  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#112413;">
     <div class="max-w-4xl mx-auto px-4 h-14 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <a href="/pages/dashboard.html" class="text-gray-400 hover:text-white transition-colors text-sm">← Dashboard</a>
@@ -220,33 +238,33 @@
 
       <!-- ── 3. QUIZ FÁCIL ── -->
       <section id="step-quiz-easy" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
-        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#0e1c10;">
           <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(52,211,153,0.15);color:#34d399;">FÁCIL</span>
           <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
         </div>
-        <div class="p-6" style="background:#111412;">
+        <div class="p-6" style="background:#112413;">
           <div id="quiz-easy" class="space-y-4"></div>
         </div>
       </section>
 
       <!-- ── 4. QUIZ MÉDIO ── -->
       <section id="step-quiz-medium" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
-        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#0e1c10;">
           <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(251,191,36,0.15);color:#fbbf24;">MÉDIO</span>
           <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
         </div>
-        <div class="p-6" style="background:#111412;">
+        <div class="p-6" style="background:#112413;">
           <div id="quiz-medium" class="space-y-4"></div>
         </div>
       </section>
 
       <!-- ── 5. QUIZ DIFÍCIL ── -->
       <section id="step-quiz-hard" class="step-panel rounded-xl overflow-hidden rise gp" style="border:1px solid rgba(255,255,255,0.06);">
-        <div class="px-6 py-4 flex items-center gap-3" style="background:#161a16;">
+        <div class="px-6 py-4 flex items-center gap-3" style="background:#0e1c10;">
           <span class="text-xs font-bold px-2 py-1 rounded-full" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
           <h2 class="text-lg font-bold flex items-center gap-2"><span>🧠</span> Quiz</h2>
         </div>
-        <div class="p-6" style="background:#111412;">
+        <div class="p-6" style="background:#112413;">
           <div id="quiz-hard" class="space-y-4"></div>
         </div>
       </section>
@@ -330,18 +348,18 @@
     <div class="mt-2 mb-4 rounded-xl overflow-hidden gp" style="border:1px solid rgba(255,255,255,0.06);">
       <button onclick="toggleChat()"
               class="w-full flex items-center justify-between px-6 py-4 hover:bg-white/5 transition-colors"
-              style="background:#111412;">
+              style="background:#112413;">
         <span class="font-medium text-sm">💬 Perguntar ao Coach</span>
         <span id="chat-arrow" class="text-gray-400 text-xs transition-transform">▼ abrir</span>
       </button>
-      <div id="chat-panel" class="hidden" style="background:#0d0f0d;">
+      <div id="chat-panel" class="hidden" style="background:#0a1a0b;">
         <div id="chat-messages" class="h-52 overflow-y-auto p-4 space-y-3">
           <p class="text-center text-xs text-gray-500 py-2">Tire dúvidas sobre esta lição</p>
         </div>
         <div class="flex gap-2 p-3 border-t border-white/5">
           <input id="chat-input" type="text" placeholder="Sua dúvida..."
                  class="flex-1 px-3 py-2 rounded-lg text-sm text-white outline-none"
-                 style="background:#161a16; border:1px solid rgba(255,255,255,0.08);"
+                 style="background:#0e1c10; border:1px solid rgba(255,255,255,0.08);"
                  onkeydown="if(event.key==='Enter') sendChat()" />
           <button onclick="sendChat()" class="px-4 py-2 rounded-lg text-sm font-bold text-black"
                   style="background:#c8a045;">Enviar</button>

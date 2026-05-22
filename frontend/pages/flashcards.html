@@ -4,7 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Revisão por Flashcards — Poker Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Epilogue:wght@900&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: {
+        colors: {
+          poker: { bg:'#0d1f0f', surface:'#112413', card:'#0e1c10', border:'#1e3d1e',
+                   accent:'#2d6e2d', ink:'#e8f5e8', muted:'#7ec87e', faint:'#4a7a4a', gold:'#c8a045' }
+        },
+        fontFamily: { display:['Epilogue','sans-serif'], body:['Space Grotesk','sans-serif'] }
+      }}
+    }
+  </script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -21,9 +35,9 @@
     .bot-nav-btn.active, .bot-nav-btn:hover { color:#c8a045; border-top-color:#c8a045; }
   </style>
 </head>
-<body class="min-h-screen pb-24 text-white" style="background:#0a0b0a;">
+<body class="min-h-screen pb-24 text-white" style="background:#0d1f0f; font-family:'Space Grotesk',sans-serif;">
 
-  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
+  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#112413;">
     <div class="max-w-2xl mx-auto px-4 h-14 flex items-center justify-between">
       <span class="font-bold text-white flex items-center gap-2"><span>🃏</span> Revisão — Flashcards</span>
       <div id="nav-xp" class="text-xs font-semibold px-3 py-1 rounded-full hidden"
@@ -139,7 +153,7 @@
   </main>
 
   <!-- Bottom Nav -->
-  <nav class="fixed bottom-0 left-0 right-0 z-40" style="background:#111412; border-top:1px solid rgba(255,255,255,0.08);">
+  <nav class="fixed bottom-0 left-0 right-0 z-40" style="background:#112413; border-top:1px solid rgba(255,255,255,0.08);">
     <div class="max-w-4xl mx-auto flex justify-around">
       <a href="/pages/dashboard.html" class="bot-nav-btn">
         <span class="text-lg">🏠</span> Home

@@ -1,7 +1,9 @@
 /* =============================================================
    glass.css — Glassmorphism design system
-   Poker Coach IA · Dark theme + gold accents
+   Poker Coach IA · Dark green theme + gold accents
    ============================================================= */
+
+body { font-family: 'Space Grotesk', sans-serif; }
 
 /* ── Ambient background: luz vinda de baixo e dos cantos ──── */
 body {
@@ -14,9 +16,9 @@ body {
 
 /* ── Painéis de vidro — classes utilitárias ───────────────── */
 
-/* Base: superfície fosca escura */
+/* Base: superfície fosca verde-escura */
 .gp {
-  background: rgba(18, 22, 18, 0.62) !important;
+  background: rgba(14, 30, 16, 0.62) !important;
   backdrop-filter: blur(20px) saturate(140%);
   -webkit-backdrop-filter: blur(20px) saturate(140%);
   border-color: rgba(255, 255, 255, 0.09) !important;
@@ -62,7 +64,7 @@ body {
 
 /* ── Navbar (sticky no topo) ──────────────────────────────── */
 nav.sticky {
-  background: rgba(10, 11, 10, 0.78) !important;
+  background: rgba(10, 24, 12, 0.78) !important;
   backdrop-filter: blur(28px) saturate(160%);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
@@ -71,7 +73,7 @@ nav.sticky {
 
 /* ── Bottom nav (fixed no rodapé) ─────────────────────────── */
 nav.fixed {
-  background: rgba(10, 11, 10, 0.88) !important;
+  background: rgba(10, 24, 12, 0.88) !important;
   backdrop-filter: blur(28px) saturate(160%);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
   border-top: 1px solid rgba(255, 255, 255, 0.09) !important;
@@ -80,14 +82,10 @@ nav.fixed {
 
 /* ── Login card ───────────────────────────────────────────── */
 .login-glass {
-  background: rgba(16, 20, 16, 0.72);
-  backdrop-filter: blur(36px) saturate(140%);
-  -webkit-backdrop-filter: blur(36px) saturate(140%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 24px;
-  box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background: #112413;
+  border: 0.5px solid #1e3d1e;
+  border-radius: 4px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
   padding: 2.5rem;
 }
 
@@ -108,9 +106,9 @@ input[type="password"]:focus,
 input[type="text"]:focus,
 textarea.feynman-ta:focus,
 select:focus {
-  border-color: rgba(200, 160, 69, 0.45) !important;
-  box-shadow: 0 0 0 3px rgba(200, 160, 69, 0.08),
-              inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(58, 138, 58, 0.70) !important;
+  box-shadow: 0 0 0 3px rgba(45, 110, 45, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.03) !important;
   outline: none;
 }
 
@@ -147,7 +145,7 @@ button[id^="quiz-btn-"]:hover:not(:disabled) {
 
 /* ── Cards do currículo (gerados pelo JS) ─────────────────── */
 #lessons-list > div {
-  background: rgba(18, 22, 18, 0.60) !important;
+  background: rgba(14, 30, 16, 0.60) !important;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -157,7 +155,7 @@ button[id^="quiz-btn-"]:hover:not(:disabled) {
 
 /* ── Leaderboard ──────────────────────────────────────────── */
 #leaderboard > div {
-  background: rgba(18, 22, 18, 0.60) !important;
+  background: rgba(14, 30, 16, 0.60) !important;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 10px;
@@ -170,7 +168,7 @@ button[id^="quiz-btn-"]:hover:not(:disabled) {
   -webkit-backdrop-filter: blur(24px) saturate(150%) !important;
 }
 #celebration-content {
-  background: rgba(12, 15, 12, 0.88) !important;
+  background: rgba(10, 24, 12, 0.88) !important;
   backdrop-filter: blur(40px) !important;
   -webkit-backdrop-filter: blur(40px) !important;
   border-color: rgba(200, 160, 69, 0.22) !important;
@@ -181,7 +179,7 @@ button[id^="quiz-btn-"]:hover:not(:disabled) {
 
 /* ── Chat ─────────────────────────────────────────────────── */
 #chat-panel {
-  background: rgba(6, 8, 6, 0.82) !important;
+  background: rgba(6, 16, 8, 0.82) !important;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
@@ -194,15 +192,15 @@ button[id^="quiz-btn-"]:hover:not(:disabled) {
 }
 
 /* ── Dropdown menu do usuário ─────────────────────────────── */
-div[style*="background:#161a16"][class*="absolute"] {
-  background: rgba(12, 15, 12, 0.94) !important;
+div[style*="background:#0e1c10"][class*="absolute"] {
+  background: rgba(10, 24, 12, 0.94) !important;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
 }
 
 /* ── Flip card (flashcards) ───────────────────────────────── */
 .flip-card-front {
-  background: rgba(18, 22, 18, 0.65) !important;
+  background: rgba(14, 30, 16, 0.65) !important;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-color: rgba(255, 255, 255, 0.09) !important;
@@ -239,10 +237,11 @@ div[style*="background:#161a16"][class*="absolute"] {
   border-color: rgba(52, 211, 153, 0.13) !important;
 }
 
-/* ── Poker cards: sombra mais profunda ────────────────────── */
+/* ── Poker cards: sombra profunda (reforça o inline do lesson.html) ─── */
 .pcard {
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.65),
-              inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.75),
+              0 2px 5px rgba(0, 0, 0, 0.5),
+              inset 0 1px 0 rgba(255, 255, 255, 0.95) !important;
 }
 
 /* ── Infinite training choice buttons ────────────────────── */
@@ -262,6 +261,10 @@ div[style*="background:#161a16"][class*="absolute"] {
 
 /* ── Seleção de texto ─────────────────────────────────────── */
 ::selection {
-  background: rgba(200, 160, 69, 0.28);
-  color: #fff;
+  background: rgba(45, 110, 45, 0.35);
+  color: #e8f5e8;
 }
+
+/* ── Mesa Verde — overrides de focus e hover ──────────────── */
+input:focus { border-color: #3a8a3a !important; outline: none; }
+button[type="submit"]:hover { background: #3a8a3a !important; }

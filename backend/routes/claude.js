@@ -13,7 +13,7 @@
 // =============================================================
 
 import { Router } from 'express';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken, requireActiveAccess } from '../middleware/auth.js';
 import rateLimit from 'express-rate-limit';
 import { db } from '../config/firebase.js';
 import { extractJson } from '../utils/extractJson.js';
@@ -149,9 +149,9 @@ function getFallbackLesson(day, title, description, category, isCashGame = false
 }
 
 // ── POST /api/claude/lesson ───────────────────────────────────
-// Gera o conteúdo didático completo de uma lição do currículo.
-// Retorna JSON estruturado com teoria, exemplos e quiz.
-router.post('/lesson', verifyToken, claudeLimiter, async (req, res) => {
+// Fase 1 (rápida): gera teoria, pontos-chave e dica (~10s).
+// A fase 2 (exercícios) é disparada em paralelo pelo frontend.
+router.post('/lesson', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
   const { day, title, description, category, forceNew = false } = req.body;
 
   if (!day || !title || !category) {
@@ -164,11 +164,9 @@ router.post('/lesson', verifyToken, claudeLimiter, async (req, res) => {
       const doc = await db.collection('lessons').doc(`day_${day}`).get();
       if (doc.exists) {
         const data = doc.data();
-        // Valida que o cache tem o formato atual (com narrative nas simulações)
-        if (data?.handSimulations?.easy?.narrative) {
-          return res.json({ lesson: data, cached: true });
+        if (data?.theory) {
+          return res.json({ lesson: { theory: data.theory, keyPoints: data.keyPoints, tip: data.tip }, cached: true });
         }
-        console.log(`Cache do Dia ${day} está no formato antigo — regenerando.`);
       }
     } catch (e) {
       console.warn('Aviso: falha ao ler cache do Firestore:', e.message);
@@ -180,13 +178,105 @@ router.post('/lesson', verifyToken, claudeLimiter, async (req, res) => {
 Crie conteúdo didático rico em português brasileiro, com linguagem clara para iniciantes a intermediários.
 IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os traduza. Exemplos obrigatórios: call (nunca "chamar"), fold (nunca "dobrar"), raise (nunca "aumentar"), check (nunca "passar"), bet (nunca "apostar" quando for jargão), bluff, range, equity, pot odds, EV, GTO, c-bet, barrel, float, squeeze, 3-bet, 4-bet, flop, turn, river, showdown, stack, blinds, ante, BTN, CO, HJ, UTG, BB, SB, overbet, check-raise, value bet, hand, board, outs.
 Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
-Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.`;
+Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
+Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+
+  const contextPrefix = isCashGame
+    ? 'Contexto: Cash game NL Hold\'em, stacks profundos (100–200bb), sem antes.'
+    : 'Contexto: Torneio MTT, stacks em BBs (80–120bb early, 25–60bb mid, 8–20bb late/FT).';
+
+  const prompt = `Crie a teoria introdutória para o Dia ${day} do plano de 90 dias.
+Título: "${title}"
+Descrição: "${description}"
+Categoria: ${category}
+${contextPrefix}
+
+Retorne APENAS este JSON válido (sem markdown, sem texto extra):
+{
+  "theory": "Explicação em 3-4 parágrafos detalhados sobre ${title}",
+  "keyPoints": ["ponto 1", "ponto 2", "ponto 3", "ponto 4"],
+  "tip": "Dica de 1-2 frases para aplicar ${title} imediatamente"
+}`;
+
+  try {
+    const text = await callClaude(system, prompt, 1500);
+    console.log('Resposta IA fase 1 (primeiros 200 chars):', text.slice(0, 200));
+
+    const lesson = extractJson(text);
+    if (!lesson) throw new Error('JSON');
+
+    if (!forceNew) {
+      try {
+        await db.collection('lessons').doc(`day_${day}`).set(
+          { theory: lesson.theory, keyPoints: lesson.keyPoints, tip: lesson.tip },
+          { merge: true }
+        );
+      } catch (e) {
+        console.warn('Aviso: falha ao salvar cache no Firestore:', e.message);
+      }
+    }
+
+    res.json({ lesson: { theory: lesson.theory, keyPoints: lesson.keyPoints, tip: lesson.tip } });
+  } catch (err) {
+    console.error('Erro ao gerar teoria da lição:', err.message);
+    if (err.name === 'TimeoutError') {
+      return res.status(504).json({ error: 'A IA demorou mais de 55s. Tente novamente.' });
+    }
+    if (err.message.includes('credit') || err.message.includes('billing') || err.message.includes('balance')) {
+      console.log('⚠️  Usando conteúdo de fallback (verifique o saldo na Anthropic)');
+      const fb = getFallbackLesson(day, title, description, category, isCashGame);
+      return res.json({ lesson: { theory: fb.theory, keyPoints: fb.keyPoints, tip: fb.tip }, fallback: true });
+    }
+    if (err.message.includes('JSON')) {
+      return res.status(502).json({ error: 'IA retornou formato inválido. Tente novamente.' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /api/claude/lesson-exercises ────────────────────────
+// Fase 2 (pesada): gera quiz, simulações e treinamento (~40s).
+// Disparado em background pelo frontend enquanto o usuário lê a teoria.
+router.post('/lesson-exercises', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
+  const { day, title, description, category, forceNew = false } = req.body;
+
+  if (!day || !title || !category) {
+    return res.status(400).json({ error: 'day, title e category são obrigatórios.' });
+  }
+
+  // ── Cache global no Firestore ─────────────────────────────────
+  if (!forceNew) {
+    try {
+      const doc = await db.collection('lessons').doc(`day_${day}`).get();
+      if (doc.exists) {
+        const data = doc.data();
+        if (data?.handSimulations?.easy?.narrative) {
+          return res.json({
+            exercises: { quiz: data.quiz, handSimulations: data.handSimulations, infiniteTraining: data.infiniteTraining },
+            cached: true,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Aviso: falha ao ler cache do Firestore:', e.message);
+    }
+  }
+
+  const isCashGame = day === 91;
+  const system = `Você é um coach de poker profissional especializado em ${isCashGame ? 'cash game (NL Hold\'em)' : 'torneios de poker (MTT)'}.
+Crie conteúdo didático rico em português brasileiro, com linguagem clara para iniciantes a intermediários.
+IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os traduza. Exemplos obrigatórios: call (nunca "chamar"), fold (nunca "dobrar"), raise (nunca "aumentar"), check (nunca "passar"), bet (nunca "apostar" quando for jargão), bluff, range, equity, pot odds, EV, GTO, c-bet, barrel, float, squeeze, 3-bet, 4-bet, flop, turn, river, showdown, stack, blinds, ante, BTN, CO, HJ, UTG, BB, SB, overbet, check-raise, value bet, hand, board, outs.
+Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
+Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
+Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
 
   const contextRule = isCashGame
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: Todas as simulações de mãos devem refletir NL Hold'em cash game: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds durante a sessão. Mencione rake/rakeback quando fizer sentido pedagógico.`
     : `0. CONTEXTO OBRIGATÓRIO — TORNEIO (MTT): Todas as simulações de mãos devem refletir torneio: stacks em BBs típicos de fase (80–120bb early, 25–60bb mid, 8–20bb late/bubble/FT), antes presentes a partir do mid-stage, pressão de bubble/ICM quando aplicável. NUNCA use contexto de cash game — sem rake, sem sessão de cash, sem rebuy ilimitado.`;
 
-  const prompt = `Crie uma lição COMPLETA de poker para o Dia ${day} do plano de 90 dias.
+  const prompt = `Crie os exercícios de poker para o Dia ${day} do plano de 90 dias.
 Título: "${title}"
 Descrição: "${description}"
 Categoria: ${category}
@@ -199,8 +289,6 @@ ${contextRule}
 
 Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 {
-  "theory": "Explicação em 3-4 parágrafos detalhados sobre ${title}",
-  "keyPoints": ["ponto 1", "ponto 2", "ponto 3", "ponto 4"],
   "quiz": {
     "easy": [
       {"question":"Pergunta simples e direta sobre ${title}","options":["A) opt","B) opt","C) opt","D) opt"],"correct":0,"explanation":"Explicação clara confirmando a opção correta"}
@@ -270,40 +358,43 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
     "concept":"1 frase resumindo o que praticar sobre ${title}",
     "drill":"Exercício prático para as próximas sessões de jogo",
     "challenge":"Desafio: faça X durante Y mãos e anote os resultados"
-  },
-  "tip":"Dica de 1-2 frases para aplicar ${title} imediatamente"
+  }
 }`;
 
   try {
-    const text = await callClaude(system, prompt, 8000);
-    console.log('Resposta IA (primeiros 200 chars):', text.slice(0, 200));
+    const text = await callClaude(system, prompt, 6500);
+    console.log('Resposta IA fase 2 (primeiros 200 chars):', text.slice(0, 200));
 
-    // Extração robusta: tenta parse direto, depois markdown fence, depois busca { }
-    const lesson = extractJson(text);
-    if (!lesson) throw new Error('JSON');
+    const exercises = extractJson(text);
+    if (!exercises) throw new Error('JSON');
 
-    // Salva no Firestore apenas na 1ª geração global (não em revisitas do mesmo usuário)
     if (!forceNew) {
       try {
-        await db.collection('lessons').doc(`day_${day}`).set(lesson);
+        await db.collection('lessons').doc(`day_${day}`).set(
+          { quiz: exercises.quiz, handSimulations: exercises.handSimulations, infiniteTraining: exercises.infiniteTraining },
+          { merge: true }
+        );
       } catch (e) {
-        console.warn('Aviso: falha ao salvar cache no Firestore:', e.message);
+        console.warn('Aviso: falha ao salvar exercícios no Firestore:', e.message);
       }
     }
 
-    res.json({ lesson });
+    res.json({ exercises: { quiz: exercises.quiz, handSimulations: exercises.handSimulations, infiniteTraining: exercises.infiniteTraining } });
   } catch (err) {
-    console.error('Erro ao gerar lição:', err.message);
+    console.error('Erro ao gerar exercícios da lição:', err.message);
     if (err.name === 'TimeoutError') {
-      return res.status(504).json({ error: 'A IA demorou mais de 55s. Tente novamente.' });
+      return res.status(504).json({ error: 'A IA demorou mais de 55s gerando exercícios. Tente novamente.' });
     }
-    // Se for erro de crédito/billing, usa conteúdo de exemplo
     if (err.message.includes('credit') || err.message.includes('billing') || err.message.includes('balance')) {
       console.log('⚠️  Usando conteúdo de fallback (verifique o saldo na Anthropic)');
-      return res.json({ lesson: getFallbackLesson(day, title, description, category, isCashGame), fallback: true });
+      const fb = getFallbackLesson(day, title, description, category, isCashGame);
+      return res.json({
+        exercises: { quiz: fb.quiz, handSimulations: fb.handSimulations, infiniteTraining: fb.infiniteTraining },
+        fallback: true,
+      });
     }
     if (err.message.includes('JSON')) {
-      return res.status(502).json({ error: 'IA retornou formato inválido. Tente novamente.' });
+      return res.status(502).json({ error: 'IA retornou formato inválido nos exercícios. Tente novamente.' });
     }
     res.status(500).json({ error: err.message });
   }
@@ -311,7 +402,7 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 
 // ── POST /api/claude/chat ─────────────────────────────────────
 // Chat livre com o coach. O usuário pode tirar dúvidas sobre poker.
-router.post('/chat', verifyToken, claudeLimiter, async (req, res) => {
+router.post('/chat', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
   const { message, context } = req.body;
 
   if (!message || message.trim().length < 3) {
@@ -334,6 +425,8 @@ REGRAS OBRIGATÓRIAS:
    - raise (NUNCA "aumentar"), check (NUNCA "passar"), bet (NUNCA "apostar")
    - flop, turn, river (NUNCA traduzir), board (NUNCA "mesa" no sentido das cartas)
    - stack (NUNCA "fichas"), range, equity, EV, GTO, bluff, c-bet, hand, outs, pot
+   - naipes no texto: Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"
+   - não use compostos híbridos como "3-bet-happy"; use termos padrão ou descreva em português
 4. Foco em GTO, exploits, EV e mental game.
 5. Máximo de 250 palavras. Se a pergunta não for sobre poker, redirecione educadamente.`;
 
@@ -353,7 +446,7 @@ REGRAS OBRIGATÓRIAS:
 // ── POST /api/claude/practice-hand ────────────────────────────
 // Gera UMA simulação de mão no nível Difícil sobre o tópico informado.
 // Sem cache — cada chamada deve ser uma mão nova.
-router.post('/practice-hand', verifyToken, claudeLimiter, async (req, res) => {
+router.post('/practice-hand', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
   const { topicTitle, context = 'tournament' } = req.body;
   if (!topicTitle || typeof topicTitle !== 'string') {
     return res.status(400).json({ error: 'topicTitle é obrigatório.' });
@@ -364,7 +457,9 @@ router.post('/practice-hand', verifyToken, claudeLimiter, async (req, res) => {
 Crie simulações realistas de mãos em português brasileiro.
 IMPORTANTE: Mantenha SEMPRE os termos técnicos em inglês (call, fold, raise, check, bet, range, equity, EV, GTO, c-bet, flop, turn, river, etc). Nunca os traduza.
 Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
-Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.`;
+Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
+Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
 
   const contextRule = isCash
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds. Mencione rake quando relevante.`

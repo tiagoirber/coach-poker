@@ -34,20 +34,22 @@ export async function verifyToken(req, res, next) {
     if (decoded.role !== undefined) {
       // Fast path: role está no custom claim do token — sem GET no Firestore
       req.user = {
-        uid:   decoded.uid,
-        email: decoded.email,
-        role:  decoded.role,
-        name:  decoded.name || decoded.email,
+        uid:             decoded.uid,
+        email:           decoded.email,
+        role:            decoded.role,
+        name:            decoded.name || decoded.email,
+        accessExpiresAt: decoded.accessExpiresAt || null, // ms timestamp ou null
       };
     } else {
       // Fallback para usuários sem claim ainda (criados antes desta versão)
       const userDoc = await db.collection('users').doc(decoded.uid).get();
       const userData = userDoc.exists ? userDoc.data() : {};
       req.user = {
-        uid:   decoded.uid,
-        email: decoded.email,
-        role:  userData.role || 'user',
-        name:  userData.name || decoded.email,
+        uid:             decoded.uid,
+        email:           decoded.email,
+        role:            userData.role || 'user',
+        name:            userData.name || decoded.email,
+        accessExpiresAt: userData.accessExpiresAt ? Date.parse(userData.accessExpiresAt) : null,
       };
       // Migração gradual: popula o claim para o próximo refresh do token
       auth.setCustomUserClaims(decoded.uid, { role: req.user.role })
@@ -68,6 +70,23 @@ export function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') {
     return res.status(403).json({
       error: 'Acesso negado. Apenas administradores podem acessar este recurso.',
+    });
+  }
+  next();
+}
+
+// ── requireActiveAccess ────────────────────────────────────────
+// Middleware adicional: bloqueia usuários com acesso expirado (accessExpiresAt no passado).
+// Admins sempre passam. Use APÓS verifyToken nas rotas de conteúdo (lições, progresso).
+// Nota: propagação via custom claims pode levar até ~1h em sessão ativa (mesmo modelo do role).
+// Para bloqueio imediato, use o botão "Bloquear" no painel admin (disables Firebase Auth).
+export function requireActiveAccess(req, res, next) {
+  if (req.user?.role === 'admin') return next();
+  const exp = req.user?.accessExpiresAt;
+  if (exp && Date.now() > exp) {
+    return res.status(403).json({
+      error: 'Seu acesso expirou. Contate o administrador.',
+      accessExpired: true,
     });
   }
   next();

@@ -4,12 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Meu Perfil — Poker Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Epilogue:wght@900&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: { extend: { colors: {
-        poker: { bg:'#0a0b0a', surface:'#111412', card:'#161a16', gold:'#c8a045' }
-      }}}
+      theme: { extend: {
+        colors: {
+          poker: { bg:'#0d1f0f', surface:'#112413', card:'#0e1c10', border:'#1e3d1e',
+                   accent:'#2d6e2d', ink:'#e8f5e8', muted:'#7ec87e', faint:'#4a7a4a', gold:'#c8a045' }
+        },
+        fontFamily: { display:['Epilogue','sans-serif'], body:['Space Grotesk','sans-serif'] }
+      }}
     }
   </script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -18,10 +25,10 @@
   <link rel="stylesheet" href="../css/glass.css">
 </head>
 
-<body class="min-h-screen pb-24 text-white" style="background:#0a0b0a;">
+<body class="min-h-screen pb-24 text-white" style="background:#0d1f0f; font-family:'Space Grotesk',sans-serif;">
 
   <!-- NAVBAR -->
-  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
+  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#112413;">
     <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <a href="/pages/dashboard.html" class="text-gray-400 hover:text-white text-sm">← Dashboard</a>
@@ -35,7 +42,7 @@
   <main class="max-w-lg mx-auto px-4 py-8 space-y-6">
 
     <!-- Card de identidade -->
-    <div class="rounded-2xl p-6 text-center space-y-3" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+    <div class="rounded-2xl p-6 text-center space-y-3" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
       <div id="profile-avatar"
            class="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold mx-auto"
            style="background:#c8a045; color:#000;">?</div>
@@ -50,26 +57,26 @@
 
     <!-- Stats -->
     <div class="grid grid-cols-2 gap-3">
-      <div class="rounded-xl p-4 text-center" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+      <div class="rounded-xl p-4 text-center" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
         <p class="text-xs text-gray-400 mb-1">XP Total</p>
         <p id="stat-xp" class="text-2xl font-bold" style="color:#c8a045;">—</p>
       </div>
-      <div class="rounded-xl p-4 text-center" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+      <div class="rounded-xl p-4 text-center" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
         <p class="text-xs text-gray-400 mb-1">Streak</p>
         <p id="stat-streak" class="text-2xl font-bold text-white">— 🔥</p>
       </div>
-      <div class="rounded-xl p-4 text-center" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+      <div class="rounded-xl p-4 text-center" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
         <p class="text-xs text-gray-400 mb-1">Lições concluídas</p>
         <p id="stat-completed" class="text-2xl font-bold text-white">—</p>
       </div>
-      <div class="rounded-xl p-4 text-center" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+      <div class="rounded-xl p-4 text-center" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
         <p class="text-xs text-gray-400 mb-1">Dia atual</p>
         <p id="stat-day" class="text-2xl font-bold text-white">—</p>
       </div>
     </div>
 
     <!-- Barra de progresso -->
-    <div class="rounded-xl p-4" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+    <div class="rounded-xl p-4" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
       <div class="flex justify-between text-xs text-gray-400 mb-2">
         <span>Progresso do currículo</span>
         <span id="stat-percent">—%</span>
@@ -80,7 +87,7 @@
     </div>
 
     <!-- Formulário de edição -->
-    <div class="rounded-2xl p-6 space-y-4" style="background:#161a16; border:1px solid rgba(255,255,255,0.06);">
+    <div class="rounded-2xl p-6 space-y-4" style="background:#0e1c10; border:1px solid rgba(255,255,255,0.06);">
       <h2 class="text-sm font-semibold text-gray-300">Editar perfil</h2>
 
       <div>

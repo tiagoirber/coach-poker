@@ -4,12 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin — Poker Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=Epilogue:wght@900&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      theme: { extend: { colors: {
-        poker: { bg:'#0a0b0a', surface:'#111412', card:'#161a16', gold:'#c8a045' }
-      }}}
+      theme: { extend: {
+        colors: {
+          poker: { bg:'#0d1f0f', surface:'#112413', card:'#0e1c10', border:'#1e3d1e',
+                   accent:'#2d6e2d', ink:'#e8f5e8', muted:'#7ec87e', faint:'#4a7a4a', gold:'#c8a045' }
+        },
+        fontFamily: { display:['Epilogue','sans-serif'], body:['Space Grotesk','sans-serif'] }
+      }}
     }
   </script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -17,9 +24,9 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 </head>
 
-<body class="min-h-screen text-white" style="background:#0a0b0a;">
+<body class="min-h-screen text-white" style="background:#0d1f0f; font-family:'Space Grotesk',sans-serif;">
 
-  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#111412;">
+  <nav class="sticky top-0 z-50 border-b border-white/5" style="background:#112413;">
     <div class="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <a href="/pages/dashboard.html" class="text-gray-400 hover:text-white text-sm">← Dashboard</a>
@@ -42,19 +49,30 @@
     <!-- Painel admin (mostrado se for admin) -->
     <div id="admin-panel" class="hidden">
 
-      <h1 class="text-2xl font-bold mb-6">Gerenciar Usuários</h1>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+        <h1 class="text-2xl font-bold">Gerenciar Usuários</h1>
+        <div class="flex items-center gap-2">
+          <a href="https://console.firebase.google.com/project/poker-coach-ia/authentication/users"
+             target="_blank" rel="noopener"
+             class="flex items-center gap-2 text-xs px-3 py-2 rounded-lg border transition-colors hover:bg-white/5"
+             style="border-color:rgba(255,255,255,0.1); color:#9ca3af;">
+            🔗 Firebase Console
+          </a>
+          <span class="text-xs text-gray-600">(borda: redefinição manual, provedores, etc.)</span>
+        </div>
+      </div>
 
       <!-- Estatísticas rápidas -->
       <div class="grid grid-cols-3 gap-4 mb-8">
-        <div class="rounded-lg p-4" style="background:#111412; border:1px solid rgba(255,255,255,0.06);">
+        <div class="rounded-lg p-4" style="background:#112413; border:1px solid rgba(255,255,255,0.06);">
           <p class="text-xs text-gray-400">Total de usuários</p>
           <p id="admin-total" class="text-2xl font-bold text-white">—</p>
         </div>
-        <div class="rounded-lg p-4" style="background:#111412; border:1px solid rgba(255,255,255,0.06);">
+        <div class="rounded-lg p-4" style="background:#112413; border:1px solid rgba(255,255,255,0.06);">
           <p class="text-xs text-gray-400">Admins</p>
           <p id="admin-count" class="text-2xl font-bold text-yellow-400">—</p>
         </div>
-        <div class="rounded-lg p-4" style="background:#111412; border:1px solid rgba(255,255,255,0.06);">
+        <div class="rounded-lg p-4" style="background:#112413; border:1px solid rgba(255,255,255,0.06);">
           <p class="text-xs text-gray-400">Usuários comuns</p>
           <p id="user-count" class="text-2xl font-bold text-blue-400">—</p>
         </div>
@@ -63,18 +81,20 @@
       <!-- Tabela de usuários -->
       <div class="rounded-xl overflow-hidden" style="border:1px solid rgba(255,255,255,0.06);">
         <table class="w-full text-sm">
-          <thead style="background:#161a16;">
+          <thead style="background:#0e1c10;">
             <tr class="text-left">
               <th class="px-4 py-3 text-gray-400 font-medium">Nome</th>
               <th class="px-4 py-3 text-gray-400 font-medium">E-mail</th>
               <th class="px-4 py-3 text-gray-400 font-medium">Role</th>
               <th class="px-4 py-3 text-gray-400 font-medium">XP</th>
+              <th class="px-4 py-3 text-gray-400 font-medium">Status</th>
+              <th class="px-4 py-3 text-gray-400 font-medium">Acesso até</th>
               <th class="px-4 py-3 text-gray-400 font-medium">Ações</th>
             </tr>
           </thead>
-          <tbody id="users-table" style="background:#111412;">
+          <tbody id="users-table" style="background:#112413;">
             <tr>
-              <td colspan="5" class="px-4 py-8 text-center text-gray-500">
+              <td colspan="7" class="px-4 py-8 text-center text-gray-500">
                 Carregando usuários...
               </td>
             </tr>
@@ -89,7 +109,7 @@
   <div id="modal-delete" class="fixed inset-0 z-50 hidden items-center justify-center"
        style="background:rgba(0,0,0,0.7);">
     <div class="rounded-xl p-6 max-w-sm mx-4"
-         style="background:#161a16; border:1px solid rgba(239,68,68,0.3);">
+         style="background:#0e1c10; border:1px solid rgba(239,68,68,0.3);">
       <h3 class="text-lg font-bold mb-2 text-red-400">Confirmar exclusão</h3>
       <p class="text-gray-400 text-sm mb-4">
         Tem certeza que deseja remover <strong id="delete-name" class="text-white"></strong>?
@@ -103,6 +123,42 @@
         <button onclick="confirmDelete()"
                 class="flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 hover:bg-red-700 text-white">
           Sim, remover
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de prazo de acesso -->
+  <div id="modal-access" class="fixed inset-0 z-50 hidden items-center justify-center"
+       style="background:rgba(0,0,0,0.7);">
+    <div class="rounded-xl p-6 max-w-sm mx-4 w-full"
+         style="background:#0e1c10; border:1px solid rgba(255,255,255,0.1);">
+      <h3 class="text-lg font-bold mb-1">Prazo de acesso</h3>
+      <p class="text-gray-400 text-sm mb-4">
+        Usuário: <strong id="access-name" class="text-white"></strong>
+      </p>
+      <label class="block text-xs text-gray-400 mb-1">Acesso válido até</label>
+      <input type="date" id="access-date"
+             class="w-full rounded-lg px-3 py-2 text-sm text-white mb-4"
+             style="background:#1a2e1a; border:1px solid rgba(255,255,255,0.1);" />
+      <p class="text-xs text-gray-500 mb-4">
+        Deixe em branco e clique em "Sem limite" para remover o prazo.
+        O bloqueio propaga no próximo refresh do token (~1h). Para bloqueio imediato, use "Bloquear".
+      </p>
+      <div class="flex gap-2">
+        <button onclick="closeAccessModal()"
+                class="flex-1 py-2 rounded-lg text-sm border border-white/10 text-gray-400 hover:bg-white/5">
+          Cancelar
+        </button>
+        <button onclick="clearAccess()"
+                class="py-2 px-3 rounded-lg text-sm border text-gray-400 hover:bg-white/5"
+                style="border-color:rgba(255,255,255,0.15);">
+          Sem limite
+        </button>
+        <button onclick="confirmAccess()"
+                class="flex-1 py-2 rounded-lg text-sm font-semibold text-white"
+                style="background:#2d6e2d;">
+          Confirmar
         </button>
       </div>
     </div>

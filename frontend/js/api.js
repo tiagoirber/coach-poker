@@ -63,6 +63,18 @@ export const userApi = {
 
   // [Admin] Remove um usuário
   delete: (uid) => apiFetch(`/users/${uid}`, { method: 'DELETE' }),
+
+  // [Admin] Bloqueia ou desbloqueia um usuário (bloqueio imediato via Firebase Auth)
+  setStatus: (uid, disabled) => apiFetch(`/users/${uid}/status`, {
+    method: 'PATCH',
+    body:   JSON.stringify({ disabled }),
+  }),
+
+  // [Admin] Define ou remove o prazo de acesso (ISO string ou null)
+  setAccess: (uid, accessExpiresAt) => apiFetch(`/users/${uid}/access`, {
+    method: 'PATCH',
+    body:   JSON.stringify({ accessExpiresAt }),
+  }),
 };
 
 // =============================================================
@@ -91,9 +103,16 @@ export const progressApi = {
 // =============================================================
 
 export const claudeApi = {
-  // Gera o conteúdo completo de uma lição
+  // Gera a teoria da lição (fase 1 — rápida)
   getLesson: (day, title, description, category, forceNew = false) =>
     apiFetch('/claude/lesson', {
+      method: 'POST',
+      body:   JSON.stringify({ day, title, description, category, forceNew }),
+    }),
+
+  // Gera quiz e simulações (fase 2 — background)
+  getLessonExercises: (day, title, description, category, forceNew = false) =>
+    apiFetch('/claude/lesson-exercises', {
       method: 'POST',
       body:   JSON.stringify({ day, title, description, category, forceNew }),
     }),

@@ -6,7 +6,8 @@ vi.mock('../middleware/auth.js', () => ({
     req.user = { uid: 'test-uid', email: 'test@test.com', role: 'user', name: 'Test' };
     next();
   },
-  requireAdmin: (_req, _res, next) => next(),
+  requireAdmin:        (_req, _res, next) => next(),
+  requireActiveAccess: (_req, _res, next) => next(),
 }));
 
 vi.mock('../config/firebase.js', () => ({
@@ -16,6 +17,12 @@ vi.mock('../config/firebase.js', () => ({
         get: vi.fn().mockResolvedValue({ exists: false, data: () => ({}) }),
         set: vi.fn().mockResolvedValue(undefined),
         update: vi.fn().mockResolvedValue(undefined),
+        collection: () => ({
+          doc: () => ({
+            get: vi.fn().mockResolvedValue({ exists: false, data: () => ({}) }),
+            set: vi.fn().mockResolvedValue(undefined),
+          }),
+        }),
       }),
       orderBy: () => ({ limit: () => ({ get: vi.fn().mockResolvedValue({ docs: [] }) }) }),
       count: () => ({ get: vi.fn().mockResolvedValue({ data: () => ({ count: 0 }) }) }),

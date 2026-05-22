@@ -7,7 +7,8 @@ vi.mock('../middleware/auth.js', () => ({
     req.user = { uid: 'test-uid', email: 'test@test.com', role: 'user', name: 'Test' };
     next();
   },
-  requireAdmin: (_req, _res, next) => next(),
+  requireAdmin:        (_req, _res, next) => next(),
+  requireActiveAccess: (_req, _res, next) => next(),
 }));
 
 vi.mock('../config/firebase.js', () => ({
@@ -89,6 +90,29 @@ describe('POST /api/claude/lesson — validação', () => {
   it('rejeita body sem category', async () => {
     const res = await request(app)
       .post('/api/claude/lesson')
+      .send({ day: 1, title: 'Equity' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('POST /api/claude/lesson-exercises — validação', () => {
+  it('rejeita body sem day', async () => {
+    const res = await request(app)
+      .post('/api/claude/lesson-exercises')
+      .send({ title: 'Equity', category: 'MATH' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejeita body sem title', async () => {
+    const res = await request(app)
+      .post('/api/claude/lesson-exercises')
+      .send({ day: 1, category: 'MATH' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejeita body sem category', async () => {
+    const res = await request(app)
+      .post('/api/claude/lesson-exercises')
       .send({ day: 1, title: 'Equity' });
     expect(res.status).toBe(400);
   });

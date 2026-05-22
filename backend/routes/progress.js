@@ -10,7 +10,7 @@
 
 import { Router } from 'express';
 import { db } from '../config/firebase.js';
-import { verifyToken } from '../middleware/auth.js';
+import { verifyToken, requireActiveAccess } from '../middleware/auth.js';
 
 const router = Router();
 
@@ -69,7 +69,7 @@ router.get('/me', verifyToken, async (req, res) => {
 // ── POST /api/progress/complete ───────────────────────────────
 // Marca uma lição como concluída.
 // Atualiza: XP total, dia atual, streak, histórico.
-router.post('/complete', verifyToken, async (req, res) => {
+router.post('/complete', verifyToken, requireActiveAccess, async (req, res) => {
   const { day, category, title } = req.body;
 
   // Validação dos dados recebidos
@@ -154,7 +154,7 @@ router.post('/complete', verifyToken, async (req, res) => {
 
 // ── GET /api/progress/history ─────────────────────────────────
 // Retorna o histórico completo de lições concluídas pelo usuário.
-router.get('/history', verifyToken, async (req, res) => {
+router.get('/history', verifyToken, requireActiveAccess, async (req, res) => {
   try {
     const snapshot = await db
       .collection('users').doc(req.user.uid)

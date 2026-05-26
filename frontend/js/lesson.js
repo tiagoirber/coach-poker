@@ -343,7 +343,7 @@ function heroCardsHtml(str) {
   if (!cards.length) return str ? `<span class="text-white text-sm font-mono">${str}</span>` : '';
   if (cards.length === 1) return cardHtml(cards[0].rank, cards[0].suit);
   const [c1, c2] = cards;
-  return `<span style="display:inline-block;transform:rotate(-9deg) translateY(7px);margin-right:-20px;z-index:1;position:relative;">${cardHtml(c1.rank, c1.suit)}</span><span style="display:inline-block;transform:rotate(9deg) translateY(7px);z-index:2;position:relative;">${cardHtml(c2.rank, c2.suit)}</span>`;
+  return `<span style="display:inline-block;transform:rotate(-9deg) translateY(10px);margin-right:-28px;z-index:1;position:relative;">${cardHtml(c1.rank, c1.suit)}</span><span style="display:inline-block;transform:rotate(9deg) translateY(10px);z-index:2;position:relative;">${cardHtml(c2.rank, c2.suit)}</span>`;
 }
 
 function renderPokerTable(sim) {
@@ -355,7 +355,7 @@ function renderPokerTable(sim) {
        <div class="pcard-back" style="opacity:0.45;"></div>`;
 
   return `
-    <div class="relative mb-5 select-none"
+    <div class="relative select-none"
          style="border-radius:36px;
                 background:linear-gradient(160deg,#4a2800 0%,#6b3e10 40%,#4a2800 70%,#2e1600 100%);
                 padding:10px;
@@ -363,7 +363,7 @@ function renderPokerTable(sim) {
       <div class="relative overflow-hidden"
            style="border-radius:28px;
                   min-height:270px;
-                  background:radial-gradient(ellipse 80% 65% at 50% 45%, #27723a 0%, #1b5229 40%, #0e3318 72%, #061209 100%);
+                  background:radial-gradient(ellipse 80% 65% at 50% 45%, #3db861 0%, #2a8a47 35%, #1a6030 65%, #0d3a1a 100%);
                   padding:20px 18px;">
         <div class="absolute inset-0 pointer-events-none"
              style="border-radius:28px;
@@ -375,7 +375,7 @@ function renderPokerTable(sim) {
                     box-shadow:inset 0 0 60px rgba(0,0,0,0.45);"></div>
         <div class="flex flex-col items-center mb-4">
           <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.22);">${sim.villainPosition || 'Vilão'}</p>
-          <div style="position:relative; width:92px; height:76px; margin:0 auto;">
+          <div style="position:relative; width:140px; height:115px; margin:0 auto;">
             <div class="pcard-back" style="position:absolute; left:0; top:0; transform:rotate(-10deg); transform-origin:50% 100%;"></div>
             <div class="pcard-back" style="position:absolute; right:0; top:0; transform:rotate(10deg); transform-origin:50% 100%;"></div>
           </div>
@@ -465,29 +465,40 @@ function renderSimLevel(level) {
 
   container.innerHTML = `
 
-    ${renderPokerTable(sim)}
+    <!-- ══ LAYOUT: MESA + NARRATIVA PARALELOS ══ -->
+    <div style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;">
 
-    <!-- ══ COMO A MÃO SE DESENVOLVEU ══ -->
-    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
-      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;">
-        <span>📖</span> Como a Mão se Desenvolveu
-      </h3>
-      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+      <!-- Coluna esquerda: mesa -->
+      <div style="flex:0 0 auto;">
+        ${renderPokerTable(sim)}
+      </div>
 
-      ${streetsSummary ? `
-      <details class="mt-5">
-        <summary class="text-xs cursor-pointer select-none transition-colors hover:text-gray-300"
-                 style="color:#4b5563;">📋 Ver resumo das streets</summary>
-        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">
-          ${streetsSummary}
+      <!-- Coluna direita: narrativa + decisão -->
+      <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;">
+
+        <!-- ══ COMO A MÃO SE DESENVOLVEU ══ -->
+        <div class="rounded-xl p-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
+          <h3 class="text-sm font-bold mb-3 flex items-center gap-2" style="color:#c8a045;">
+            <span>📖</span> Como a Mão se Desenvolveu
+          </h3>
+          <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+          ${streetsSummary ? `
+          <details class="mt-4">
+            <summary class="text-xs cursor-pointer select-none transition-colors hover:text-gray-300"
+                     style="color:#4b5563;">📋 Ver resumo das streets</summary>
+            <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">
+              ${streetsSummary}
+            </div>
+          </details>` : ''}
         </div>
-      </details>` : ''}
-    </div>
 
-    <!-- ══ DECISÃO ══ -->
-    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
-      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
-      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+        <!-- ══ DECISÃO ══ -->
+        <div class="rounded-xl p-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+          <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+          <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+        </div>
+
+      </div>
     </div>
 
     <!-- ══ OPÇÕES ══ -->
@@ -837,21 +848,33 @@ function renderInfiniteHand(sim, topicTitle, mode) {
       <span class="text-xs font-bold ml-auto px-2 py-0.5 rounded" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
     </div>
 
-    ${renderPokerTable(sim)}
+    <!-- ══ LAYOUT: MESA + NARRATIVA PARALELOS ══ -->
+    <div style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;">
 
-    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
-      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;"><span>📖</span> Como a Mão se Desenvolveu</h3>
-      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
-      ${streetsSummary ? `
-      <details class="mt-5">
-        <summary class="text-xs cursor-pointer select-none hover:text-gray-300 transition-colors" style="color:#4b5563;">📋 Ver resumo das streets</summary>
-        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">${streetsSummary}</div>
-      </details>` : ''}
-    </div>
+      <!-- Coluna esquerda: mesa -->
+      <div style="flex:0 0 auto;">
+        ${renderPokerTable(sim)}
+      </div>
 
-    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
-      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
-      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+      <!-- Coluna direita: narrativa + decisão -->
+      <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;">
+
+        <div class="rounded-xl p-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
+          <h3 class="text-sm font-bold mb-3 flex items-center gap-2" style="color:#c8a045;"><span>📖</span> Como a Mão se Desenvolveu</h3>
+          <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+          ${streetsSummary ? `
+          <details class="mt-4">
+            <summary class="text-xs cursor-pointer select-none hover:text-gray-300 transition-colors" style="color:#4b5563;">📋 Ver resumo das streets</summary>
+            <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">${streetsSummary}</div>
+          </details>` : ''}
+        </div>
+
+        <div class="rounded-xl p-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+          <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+          <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+        </div>
+
+      </div>
     </div>
 
     <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-inf">

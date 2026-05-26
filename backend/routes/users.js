@@ -12,6 +12,7 @@
 
 import { Router } from 'express';
 import { db, auth } from '../config/firebase.js';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyToken, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
@@ -221,6 +222,36 @@ router.delete('/:uid', verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Erro ao deletar usuário:', err);
     res.status(500).json({ error: 'Erro ao remover usuário.' });
+  }
+});
+
+// ── DELETE /api/users/lessons/cache (admin only) ─────────────
+// Remove os campos de exercícios (handSimulations, quiz, infiniteTraining)
+// de todos os docs lessons/day_X, forçando regeneração com o novo pipeline.
+// Preserva theory, keyPoints e tip (gerados na fase 1, não contêm narrativas).
+// Deve ser executado uma vez após deploy do sistema de linguagem.
+router.delete('/lessons/cache', verifyToken, requireAdmin, async (req, res) => {
+  const TOTAL_DAYS = 91;
+  let cleared = 0;
+
+  try {
+    const batch = db.batch();
+
+    for (let day = 1; day <= TOTAL_DAYS; day++) {
+      const ref = db.collection('lessons').doc(`day_${day}`);
+      batch.update(ref, {
+        handSimulations:  FieldValue.delete(),
+        quiz:             FieldValue.delete(),
+        infiniteTraining: FieldValue.delete(),
+      });
+      cleared++;
+    }
+
+    await batch.commit();
+    res.json({ cleared, message: `Cache de exercícios limpo para ${cleared} lições. Serão regenerados com linguagem poker brasileiro correta.` });
+  } catch (err) {
+    console.error('Erro ao limpar cache de narrativas:', err);
+    res.status(500).json({ error: 'Erro ao limpar cache.' });
   }
 });
 

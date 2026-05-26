@@ -14,6 +14,13 @@
 
 import { Router } from 'express';
 import { verifyToken, requireActiveAccess } from '../middleware/auth.js';
+import {
+  normalizePokerLanguage,
+  validatePokerLanguage,
+  POKER_BR_NARRATIVE_PROMPT,
+  POKER_BR_REVIEW_PROMPT_TEMPLATE,
+  strictPokerLanguageMode,
+} from '../utils/pokerLanguage.js';
 import rateLimit from 'express-rate-limit';
 import { db } from '../config/firebase.js';
 import { extractJson } from '../utils/extractJson.js';
@@ -270,7 +277,8 @@ IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os tr
 Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
 Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
 Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
-Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.
+${POKER_BR_NARRATIVE_PROMPT}`;
 
   const contextRule = isCashGame
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: Todas as simulações de mãos devem refletir NL Hold'em cash game: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds durante a sessão. Mencione rake/rakeback quando fizer sentido pedagógico.`
@@ -368,6 +376,30 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
     const exercises = extractJson(text);
     if (!exercises) throw new Error('JSON');
 
+    // ── Pipeline de linguagem poker brasileiro ────────────────────────────
+    for (const level of ['easy', 'medium', 'hard']) {
+      const sim = exercises.handSimulations?.[level];
+      if (!sim?.narrative) continue;
+
+      sim.narrative = normalizePokerLanguage(sim.narrative);
+
+      const { isValid, issues } = validatePokerLanguage(sim.narrative);
+      if (!isValid) {
+        console.warn(`[pokerLanguage] lesson-exercises day=${day} ${level}:`,
+          issues.map(i => `${i.forbiddenTerm}(${i.severity})`).join(', '));
+      }
+
+      if (strictPokerLanguageMode && issues.some(i => i.severity === 'high')) {
+        const reviewPrompt = POKER_BR_REVIEW_PROMPT_TEMPLATE.replace('{{NARRATIVE}}', sim.narrative);
+        try {
+          const revised = await callClaude('', reviewPrompt, 800);
+          if (revised) sim.narrative = revised.trim();
+        } catch (e) {
+          console.warn('[pokerLanguage] revisão IA falhou, usando versão normalizada:', e.message);
+        }
+      }
+    }
+
     if (!forceNew) {
       try {
         await db.collection('lessons').doc(`day_${day}`).set(
@@ -459,7 +491,8 @@ IMPORTANTE: Mantenha SEMPRE os termos técnicos em inglês (call, fold, raise, c
 Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
 Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
 Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
-Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.
+${POKER_BR_NARRATIVE_PROMPT}`;
 
   const contextRule = isCash
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds. Mencione rake quando relevante.`
@@ -499,6 +532,16 @@ Retorne APENAS este JSON válido (sem markdown):
     const text = await callClaude(system, prompt, 3000);
     const sim = extractJson(text);
     if (!sim || !sim.options || sim.correct === undefined) throw new Error('JSON');
+
+    if (sim.narrative) {
+      sim.narrative = normalizePokerLanguage(sim.narrative);
+      const { isValid, issues } = validatePokerLanguage(sim.narrative);
+      if (!isValid) {
+        console.warn('[pokerLanguage] practice-hand:',
+          issues.map(i => `${i.forbiddenTerm}(${i.severity})`).join(', '));
+      }
+    }
+
     res.json({ sim });
   } catch (err) {
     console.error('Erro ao gerar mão de prática:', err.message);

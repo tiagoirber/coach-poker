@@ -172,13 +172,11 @@ Se `npm` não estiver disponível (computador do trabalho), registrar explicitam
 ## 12. Estado atual e próximos passos
 
 **Última sessão (maio 2026):**
-- Implementados todos os itens pendentes do README: ESLint, DOMPurify, página de perfil, Custom Claims e suíte de testes Vitest.
-- ESLint: `eslint.config.js` criado (flat config v9), scripts `lint`/`test`/`test:watch` adicionados ao `package.json`, devDeps `eslint globals vitest supertest` declaradas.
-- DOMPurify: XSS fechados no chat do coach (`lesson.js`) e no painel admin (`admin.js` + `admin.html`).
-- Página de perfil: `frontend/pages/profile.html` + `frontend/js/profile.js` (mostra XP, streak, dias, progresso; edita nome e avatar). Guard de auth adicionado em `auth.js`.
-- Custom Claims Firebase Auth: `auth.js` agora lê `role` do token (sem GET no Firestore); fallback + migração gradual para usuários antigos. `users.js` chama `setCustomUserClaims` no registro e na troca de role.
-- Testes Vitest: `backend/utils/extractJson.js` (util extraído de `claude.js`), `backend/utils/extractJson.test.js` (11 testes), `backend/routes/claude.test.js`, `backend/routes/progress.test.js`.
-- Leaderboard: já estava implementado (backend + frontend) — só verificação visual necessária.
+- **Painel admin completo**: bloqueio/desbloqueio de usuário (imediato via Firebase Auth), prazo de acesso com date picker (`accessExpiresAt`), reset de senha por email (`sendPasswordResetEmail`), link Firebase Console, badges Ativo/Bloqueado e data de expiração na tabela.
+- **Middleware `requireActiveAccess`**: bloqueia usuários expirados nas rotas de conteúdo (lições, chat, `/progress/complete`, `/progress/history`). Admins sempre passam.
+- **`syncClaims`** em `users.js`: preserva `role` + `accessExpiresAt` nos custom claims ao mudar qualquer um dos dois.
+- **Fix vocabulário**: naipe ♥ = Copas (nunca "corações"); proibidos termos híbridos como "3-bet-happy" nos prompts de geração de lições.
+- Merge PR #2 em `main` (SHA `26db39a`). Deploy realizado em `https://poker-coach-ia.web.app`.
 
 **Próximos passos possíveis:**
 - Domínio customizado (configuração manual no Firebase Console, não é código).
@@ -187,6 +185,6 @@ Se `npm` não estiver disponível (computador do trabalho), registrar explicitam
 
 **Decisões importantes:**
 - Cache em dois níveis: localStorage (por usuário/sessão) + Firestore `lessons/day_X` (global). 2ª visita do mesmo usuário sempre gera conteúdo novo via IA (`forceNew: true`).
+- Two-phase: fase 1 usa `max_tokens:1500` (~10s), fase 2 usa `max_tokens:6500` (~40s). Firestore usa `set({...},{merge:true})` — docs antigos continuam compatíveis sem invalidar cache.
 - Progressão é linear e bloqueada — não é possível pular etapas. Feynman é sempre o primeiro passo desbloqueado após a teoria.
-- Modelo para lições: Claude Haiku 4.5 com `max_tokens: 8000` (equilíbrio custo/qualidade).
 - Extração de JSON robusta no backend: tenta parse direto → markdown fence → primeiro/último `{ }`.

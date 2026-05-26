@@ -1,0 +1,167 @@
+{
+  "keepInEnglish": [
+    "call", "raise", "fold", "check", "bet", "all-in",
+    "flop", "turn", "river", "showdown",
+    "stack", "short stack", "deep stack",
+    "blind", "small blind", "big blind", "button", "cutoff", "hijack", "UTG",
+    "pot", "range", "draw", "flush draw", "straight draw",
+    "overpair", "top pair", "middle pair", "bottom pair", "two pair",
+    "set", "trips", "full house", "nuts", "blocker", "kicker",
+    "c-bet", "3-bet", "4-bet", "squeeze", "limp", "iso-raise",
+    "donk bet", "check-raise", "value bet", "bluff", "semi-bluff",
+    "hero call", "bad beat", "cooler", "tilt", "bankroll", "ICM"
+  ],
+  "allowedInPortuguese": [
+    "pagar", "apostar", "aumentar", "desistir", "fichas",
+    "mão", "mesa", "pote", "posição", "ação", "rodada",
+    "leitura", "linha de jogo", "valor", "blefe", "equidade",
+    "tamanho da aposta", "tamanho do stack",
+    "pré-flop", "pós-flop", "board", "vilão", "herói"
+  ],
+  "forbidden": [
+    {
+      "term": "grande cego",
+      "replacement": "big blind",
+      "pattern": "grande cego",
+      "explanation": "'Big blind' nunca é traduzido como 'grande cego' no poker brasileiro.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "pequeno cego",
+      "replacement": "small blind",
+      "pattern": "pequeno cego",
+      "explanation": "'Small blind' nunca é traduzido como 'pequeno cego' no poker brasileiro.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "botão do negociante",
+      "replacement": "button",
+      "pattern": "botão do negociante",
+      "explanation": "Use 'button' ou simplesmente 'botão' em vez de 'botão do negociante'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "mão cheia",
+      "replacement": "full house",
+      "pattern": "mão cheia",
+      "explanation": "'Full house' nunca é traduzido como 'mão cheia' no poker brasileiro.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "sequência reta",
+      "replacement": "straight",
+      "pattern": "sequência reta",
+      "explanation": "Use 'straight' ou 'sequência' em vez de 'sequência reta'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "fracasso",
+      "replacement": "flop",
+      "pattern": "\\bfracasso\\b",
+      "explanation": "Jogadores brasileiros não usam 'fracasso' para o flop.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "virada",
+      "replacement": "turn",
+      "pattern": "\\bvirada\\b",
+      "explanation": "A street 'turn' nunca é traduzida como 'virada' no poker brasileiro.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "tábua",
+      "replacement": "board",
+      "pattern": "\\btábua\\b",
+      "explanation": "Use 'board' ou 'mesa' para as cartas comunitárias, nunca 'tábua'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "verificou",
+      "replacement": "deu check",
+      "pattern": "\\bverificou\\b",
+      "explanation": "Use 'deu check' ou 'checou' em vez de 'verificou'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "verificaram",
+      "replacement": "deram check",
+      "pattern": "\\bverificaram\\b",
+      "explanation": "Use 'deram check' em vez de 'verificaram'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "verificando",
+      "replacement": "dando check",
+      "pattern": "\\bverificando\\b",
+      "explanation": "Use 'dando check' em vez de 'verificando'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "verificar",
+      "replacement": "dar check",
+      "pattern": "\\bverificar\\b",
+      "explanation": "Use 'dar check' ou 'checar' em vez de 'verificar'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "chamou (call)",
+      "replacement": "pagou",
+      "pattern": "\\bchamou\\b",
+      "explanation": "Em narrativa de poker, use 'pagou' ou 'deu call' em vez de 'chamou'.",
+      "severity": "medium",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "chamaram (call)",
+      "replacement": "pagaram",
+      "pattern": "\\bchamaram\\b",
+      "explanation": "Em narrativa de poker, use 'pagaram' ou 'deram call' em vez de 'chamaram'.",
+      "severity": "medium",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "chamar (call)",
+      "replacement": "pagar",
+      "pattern": "\\bchamar\\b",
+      "explanation": "Use 'pagar', 'dar call' ou 'fazer call' em vez de 'chamar' no sentido de call.",
+      "severity": "medium",
+      "safeToAutoReplace": false
+    },
+    {
+      "term": "rio (street)",
+      "replacement": "river",
+      "pattern": "\\brio\\b",
+      "explanation": "A street 'river' nunca é traduzida como 'rio' no poker brasileiro.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "dobrar (raise)",
+      "replacement": "dar raise",
+      "pattern": "\\bdob(?:rou|ram|rar|rando)\\b",
+      "explanation": "Não use 'dobrar' como sinônimo de raise. Use 'deu raise', 'aumentou' ou 'relançou'.",
+      "severity": "medium",
+      "safeToAutoReplace": false
+    },
+    {
+      "term": "cor (flush)",
+      "replacement": "flush",
+      "pattern": "\\bcor\\b",
+      "explanation": "Use 'flush' em vez de 'cor' para a combinação de cartas do mesmo naipe.",
+      "severity": "low",
+      "safeToAutoReplace": false
+    }
+  ]
+}

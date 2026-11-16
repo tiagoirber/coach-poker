@@ -102,7 +102,6 @@ function renderUI() {
 }
 
 function updateStats() {
-  const now = Date.now();
   const newCount      = deck.filter(c => c.status === 'new').length;
   const learningCount = deck.filter(c => c.status === 'learning').length;
   const masteredCount = deck.filter(c => c.status === 'mastered').length;

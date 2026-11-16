@@ -28,7 +28,8 @@ async function loadProfile() {
       roleEl.style.color      = '#eab308';
     }
 
-    if (user.avatarUrl) {
+    // Só http(s) — o backend valida, mas docs antigos podem ter outro esquema
+    if (user.avatarUrl && /^https?:\/\//i.test(user.avatarUrl)) {
       const img = document.createElement('img');
       img.src       = user.avatarUrl;
       img.alt       = 'avatar';

@@ -27,9 +27,9 @@ if (!firebase.apps.length) {
   firebase.initializeApp(firebaseConfig);
 }
 
-// Exporta as instâncias do Firebase para os outros módulos
+// Exporta a instância de Auth para os outros módulos.
+// O frontend não acessa o Firestore direto — tudo passa pela API (api.js).
 export const fbAuth = firebase.auth();
-export const fbDb   = firebase.firestore();
 
 // Versão do formato JSON da lição em cache (localStorage + Firestore).
 // Bumpar APENAS quando o schema muda — bump invalida cache de todos os usuários.

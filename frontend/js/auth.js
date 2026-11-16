@@ -16,13 +16,6 @@ import { fbAuth, API_URL } from './config.js';
 // Flag: impede o redirect automático enquanto o cadastro Google está em andamento
 let _googleRegistering = false;
 
-// ── Gerenciamento de sessão ───────────────────────────────────
-export async function getToken() {
-  const user = fbAuth.currentUser;
-  if (!user) return null;
-  return user.getIdToken(false);
-}
-
 // ── Observador de estado de autenticação ─────────────────────
 fbAuth.onAuthStateChanged(async (user) => {
   const path = window.location.pathname;
@@ -39,7 +32,6 @@ fbAuth.onAuthStateChanged(async (user) => {
     if (isAuthPage && !_googleRegistering) {
       window.location.href = '/pages/dashboard.html';
     }
-    window._currentUser = user;
   } else {
     if (isDashboard || isLesson || isAdmin || isFlashcards || isProfile) {
       window.location.href = '/index.html';
@@ -172,7 +164,7 @@ window.handleResetPassword = async function() {
     await fbAuth.sendPasswordResetEmail(email);
     showError('login-error', `✅ Link de redefinição enviado para ${email}`);
     document.getElementById('login-error').style.color = '#34d399';
-  } catch (err) {
+  } catch {
     showError('login-error', 'E-mail não encontrado ou inválido.');
   }
 };

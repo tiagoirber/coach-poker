@@ -55,7 +55,15 @@
       "term": "sequência reta",
       "replacement": "straight",
       "pattern": "sequência reta",
-      "explanation": "Use 'straight' ou 'sequência' em vez de 'sequência reta'.",
+      "explanation": "Use 'straight' em vez de 'sequência reta'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "reta",
+      "replacement": "straight",
+      "pattern": "\\breta\\b",
+      "explanation": "A mão 'straight' nunca é chamada de 'reta' no poker brasileiro — use sempre 'straight'.",
       "severity": "high",
       "safeToAutoReplace": true
     },
@@ -71,9 +79,9 @@
       "term": "virada",
       "replacement": "turn",
       "pattern": "\\bvirada\\b",
-      "explanation": "A street 'turn' nunca é traduzida como 'virada' no poker brasileiro.",
+      "explanation": "A street 'turn' nunca é traduzida como 'virada' no poker brasileiro. Não é auto-substituído: 'virada no torneio' é uso legítimo.",
       "severity": "high",
-      "safeToAutoReplace": true
+      "safeToAutoReplace": false
     },
     {
       "term": "tábua",
@@ -111,25 +119,25 @@
       "term": "verificar",
       "replacement": "dar check",
       "pattern": "\\bverificar\\b",
-      "explanation": "Use 'dar check' ou 'checar' em vez de 'verificar'.",
+      "explanation": "Use 'dar check' ou 'checar' em vez de 'verificar'. Não é auto-substituído: 'verificar as pot odds' é uso legítimo.",
       "severity": "high",
-      "safeToAutoReplace": true
+      "safeToAutoReplace": false
     },
     {
       "term": "chamou (call)",
       "replacement": "pagou",
       "pattern": "\\bchamou\\b",
-      "explanation": "Em narrativa de poker, use 'pagou' ou 'deu call' em vez de 'chamou'.",
+      "explanation": "Em narrativa de poker, use 'pagou' ou 'deu call' em vez de 'chamou'. Não é auto-substituído: 'chamou a atenção' é uso legítimo.",
       "severity": "medium",
-      "safeToAutoReplace": true
+      "safeToAutoReplace": false
     },
     {
       "term": "chamaram (call)",
       "replacement": "pagaram",
       "pattern": "\\bchamaram\\b",
-      "explanation": "Em narrativa de poker, use 'pagaram' ou 'deram call' em vez de 'chamaram'.",
+      "explanation": "Em narrativa de poker, use 'pagaram' ou 'deram call' em vez de 'chamaram'. Não é auto-substituído (ambíguo fora do contexto de call).",
       "severity": "medium",
-      "safeToAutoReplace": true
+      "safeToAutoReplace": false
     },
     {
       "term": "chamar (call)",
@@ -143,9 +151,9 @@
       "term": "rio (street)",
       "replacement": "river",
       "pattern": "\\brio\\b",
-      "explanation": "A street 'river' nunca é traduzida como 'rio' no poker brasileiro.",
+      "explanation": "A street 'river' nunca é traduzida como 'rio' no poker brasileiro. Não é auto-substituído: 'Rio de Janeiro' viraria 'river de Janeiro'.",
       "severity": "high",
-      "safeToAutoReplace": true
+      "safeToAutoReplace": false
     },
     {
       "term": "dobrar (raise)",
@@ -162,6 +170,38 @@
       "explanation": "Use 'flush' em vez de 'cor' para a combinação de cartas do mesmo naipe.",
       "severity": "low",
       "safeToAutoReplace": false
+    },
+    {
+      "term": "mãos margem",
+      "replacement": "mãos marginais",
+      "pattern": "mãos margem",
+      "explanation": "O correto em português é 'mãos marginais', não 'mãos margem'.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "sets",
+      "replacement": "trinca",
+      "pattern": "\\bsets\\b",
+      "explanation": "Em poker brasileiro, use 'trinca' em vez de 'sets' para three of a kind feito com pocket pair.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "set",
+      "replacement": "trinca",
+      "pattern": "\\bset\\b",
+      "explanation": "Em poker brasileiro, use 'trinca' em vez de 'set' para three of a kind feito com pocket pair.",
+      "severity": "high",
+      "safeToAutoReplace": true
+    },
+    {
+      "term": "call feliz",
+      "replacement": "call",
+      "pattern": "call feliz",
+      "explanation": "'Call feliz' não é um termo do poker brasileiro. Use 'call', 'call especulativo' ou descreva a situação.",
+      "severity": "high",
+      "safeToAutoReplace": true
     }
   ]
 }

@@ -31,7 +31,13 @@ export function normalizePokerLanguage(text) {
   let result = text;
   for (const entry of glossary.forbidden) {
     if (entry.safeToAutoReplace) {
-      result = result.replace(new RegExp(entry.pattern, 'gi'), entry.replacement);
+      // Preserva maiúscula inicial ("Verificou" → "Deu check", não "deu check")
+      result = result.replace(new RegExp(entry.pattern, 'gi'), (match) => {
+        const startsUpper = match[0] !== match[0].toLowerCase();
+        return startsUpper
+          ? entry.replacement[0].toUpperCase() + entry.replacement.slice(1)
+          : entry.replacement;
+      });
     }
   }
   return result;
@@ -55,9 +61,12 @@ PROIBIDO em narrativas:
 - "tábua" para board — use "board" ou "mesa"
 - "botão do negociante" para button — use "button" ou "botão"
 - "mão cheia" para full house — use "full house"
-- "sequência reta" para straight — use "straight" ou "sequência"
+- "reta" ou "sequência reta" para straight — use SEMPRE "straight"
 - "dobrar" como sinônimo de raise — use "deu raise", "aumentou" ou "relançou"
 - "cor" para flush — use "flush"
+- "set" ou "sets" para trinca com pocket pair — use SEMPRE "trinca"
+- "mãos margem" — use "mãos marginais"
+- "call feliz" — não é termo do poker; use "call", "call especulativo" ou descreva a situação
 
 VERBOS CORRETOS em português brasileiro para ações de poker:
 - call: "paga", "pagou", "dá call", "deu call"
@@ -93,8 +102,11 @@ Termos proibidos (substitua pelos indicados):
 - "tábua" (board) → "board"
 - "botão do negociante" → "button"
 - "mão cheia" → "full house"
-- "sequência reta" → "straight"
+- "reta" / "sequência reta" → "straight"
 - "dobrar a aposta" (raise) → "deu raise" / "aumentou"
+- "set" / "sets" (trinca com pocket pair) → "trinca"
+- "mãos margem" → "mãos marginais"
+- "call feliz" → "call" ou "call especulativo"
 
 Narrativa:
 {{NARRATIVE}}`;

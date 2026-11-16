@@ -49,7 +49,12 @@
       "node_modules",
       ".git",
       "*.local",
-      "firebase-debug.log"
+      "firebase-debug.log",
+      ".env",
+      ".env.*",
+      "firebase-service-account.json",
+      "context",
+      "docs"
     ]
   },
   "firestore": {

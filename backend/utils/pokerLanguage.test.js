@@ -8,14 +8,8 @@ describe('normalizePokerLanguage — casos obrigatórios', () => {
     expect(normalizePokerLanguage(input)).toBe(expected);
   });
 
-  it('substitui rio por river', () => {
-    const input    = 'O rio trouxe uma carta ruim para o herói.';
-    const expected = 'O river trouxe uma carta ruim para o herói.';
-    expect(normalizePokerLanguage(input)).toBe(expected);
-  });
-
-  it('substitui pequeno cego e chamou', () => {
-    const input    = 'O pequeno cego chamou a aposta.';
+  it('substitui pequeno cego', () => {
+    const input    = 'O pequeno cego pagou a aposta.';
     const expected = 'O small blind pagou a aposta.';
     expect(normalizePokerLanguage(input)).toBe(expected);
   });
@@ -25,15 +19,9 @@ describe('normalizePokerLanguage — casos obrigatórios', () => {
     expect(normalizePokerLanguage(input)).toBe(input);
   });
 
-  it('substitui mão cheia e rio simultaneamente', () => {
-    const input    = 'Vilão tinha mão cheia no rio.';
+  it('substitui mão cheia', () => {
+    const input    = 'Vilão tinha mão cheia no river.';
     const expected = 'Vilão tinha full house no river.';
-    expect(normalizePokerLanguage(input)).toBe(expected);
-  });
-
-  it('substitui virada por turn', () => {
-    const input    = 'Na virada veio o Rei de Ouros.';
-    const expected = 'Na turn veio o Rei de Ouros.';
     expect(normalizePokerLanguage(input)).toBe(expected);
   });
 
@@ -43,10 +31,20 @@ describe('normalizePokerLanguage — casos obrigatórios', () => {
     expect(normalizePokerLanguage(input)).toBe(expected);
   });
 
-  it('substitui verificar (infinitivo) por dar check', () => {
-    const input    = 'A decisão era verificar ou apostar.';
-    const expected = 'A decisão era dar check ou apostar.';
-    expect(normalizePokerLanguage(input)).toBe(expected);
+  it('substitui sets por trinca', () => {
+    expect(normalizePokerLanguage('Ele tem muitos sets no range.')).toBe('Ele tem muitos trinca no range.');
+  });
+
+  it('preserva maiúscula inicial na substituição', () => {
+    expect(normalizePokerLanguage('Verificou o flop. Fracasso seco.')).toBe('Deu check o flop. Flop seco.');
+  });
+
+  // Termos ambíguos fora do contexto de poker só são sinalizados pelo validate —
+  // auto-substituir geraria "river de Janeiro", "pagou a atenção", "turn no torneio",
+  // "dar check as pot odds".
+  it('não auto-substitui rio, virada, chamou, chamaram e verificar (ambíguos)', () => {
+    const input = 'Ele mora no Rio. Foi uma virada no torneio. Isso chamou a atenção; chamaram o floor. Vale verificar as pot odds.';
+    expect(normalizePokerLanguage(input)).toBe(input);
   });
 });
 
@@ -64,10 +62,11 @@ describe('validatePokerLanguage — detecção de issues', () => {
     expect(issues.some(i => i.forbiddenTerm === 'fracasso' && i.severity === 'high')).toBe(true);
   });
 
-  it('detecta rio com severity high', () => {
-    const { isValid, issues } = validatePokerLanguage('O rio foi uma carta ruim.');
+  it('detecta rio e virada com severity high mesmo sem auto-substituir', () => {
+    const { isValid, issues } = validatePokerLanguage('O rio foi uma carta ruim. Na virada veio um Rei.');
     expect(isValid).toBe(false);
-    expect(issues.some(i => i.severity === 'high')).toBe(true);
+    expect(issues.some(i => i.forbiddenTerm === 'rio (street)' && i.severity === 'high')).toBe(true);
+    expect(issues.some(i => i.forbiddenTerm === 'virada' && i.severity === 'high')).toBe(true);
   });
 
   it('detecta múltiplos problemas e os lista todos', () => {
@@ -88,5 +87,10 @@ describe('validatePokerLanguage — detecção de issues', () => {
   it('detecta chamou com severity medium', () => {
     const { issues } = validatePokerLanguage('Ele chamou a aposta.');
     expect(issues.some(i => i.forbiddenTerm === 'chamou (call)' && i.severity === 'medium')).toBe(true);
+  });
+
+  it('detecta verificar (infinitivo) com severity high', () => {
+    const { issues } = validatePokerLanguage('A decisão era verificar ou apostar.');
+    expect(issues.some(i => i.forbiddenTerm === 'verificar' && i.severity === 'high')).toBe(true);
   });
 });

@@ -12,6 +12,7 @@
 
 import { Router } from 'express';
 import { db, auth } from '../config/firebase.js';
+import { FieldValue } from 'firebase-admin/firestore';
 import { verifyToken, requireAdmin } from '../middleware/auth.js';
 
 const router = Router();
@@ -31,8 +32,8 @@ async function syncClaims(uid) {
 // Chamado pelo frontend logo após o usuário se registrar no Firebase Auth.
 // Cria o documento do usuário no Firestore com dados iniciais.
 router.post('/register', verifyToken, async (req, res) => {
-  const rawName = req.body.name;
-  const name = (rawName || '').trim() || req.user.email?.split('@')[0] || 'Usuário';
+  const rawName = typeof req.body.name === 'string' ? req.body.name : '';
+  const name = rawName.trim().slice(0, 80) || req.user.email?.split('@')[0] || 'Usuário';
 
   if (name.length < 1) {
     return res.status(400).json({ error: 'Nome inválido.' });
@@ -132,15 +133,17 @@ router.put('/me', verifyToken, async (req, res) => {
   const updates = { updatedAt: new Date().toISOString() };
 
   if (name !== undefined) {
-    if (name.trim().length < 2) {
-      return res.status(400).json({ error: 'Nome deve ter pelo menos 2 caracteres.' });
+    if (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 80) {
+      return res.status(400).json({ error: 'Nome deve ter entre 2 e 80 caracteres.' });
     }
     updates.name = name.trim();
   }
 
   if (avatarUrl !== undefined) {
-    // Valida que é uma URL válida
-    try { new URL(avatarUrl); } catch {
+    // Só http(s): new URL() aceitaria "javascript:" e "data:"
+    let parsed;
+    try { parsed = new URL(avatarUrl); } catch { parsed = null; }
+    if (!parsed || !/^https?:$/.test(parsed.protocol)) {
       return res.status(400).json({ error: 'avatarUrl inválida.' });
     }
     updates.avatarUrl = avatarUrl;
@@ -221,6 +224,37 @@ router.delete('/:uid', verifyToken, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Erro ao deletar usuário:', err);
     res.status(500).json({ error: 'Erro ao remover usuário.' });
+  }
+});
+
+// ── DELETE /api/users/lessons/cache (admin only) ─────────────
+// Remove os campos de exercícios (handSimulations, quiz, infiniteTraining)
+// de todos os docs lessons/day_X, forçando regeneração com o novo pipeline.
+// Preserva theory, keyPoints e tip (gerados na fase 1, não contêm narrativas).
+// Deve ser executado uma vez após deploy do sistema de linguagem.
+router.delete('/lessons/cache', verifyToken, requireAdmin, async (req, res) => {
+  let cleared = 0;
+
+  try {
+    // Só os docs que existem: batch.update em doc inexistente falha com
+    // NOT_FOUND e aborta o batch inteiro.
+    const snapshot = await db.collection('lessons').get();
+    const batch = db.batch();
+
+    snapshot.docs.forEach(doc => {
+      batch.update(doc.ref, {
+        handSimulations:  FieldValue.delete(),
+        quiz:             FieldValue.delete(),
+        infiniteTraining: FieldValue.delete(),
+      });
+      cleared++;
+    });
+
+    if (cleared > 0) await batch.commit();
+    res.json({ cleared, message: `Cache de exercícios limpo para ${cleared} lições. Serão regenerados com linguagem poker brasileiro correta.` });
+  } catch (err) {
+    console.error('Erro ao limpar cache de narrativas:', err);
+    res.status(500).json({ error: 'Erro ao limpar cache.' });
   }
 });
 

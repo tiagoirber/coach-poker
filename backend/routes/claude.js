@@ -14,6 +14,13 @@
 
 import { Router } from 'express';
 import { verifyToken, requireActiveAccess } from '../middleware/auth.js';
+import {
+  normalizePokerLanguage,
+  validatePokerLanguage,
+  POKER_BR_NARRATIVE_PROMPT,
+  POKER_BR_REVIEW_PROMPT_TEMPLATE,
+  strictPokerLanguageMode,
+} from '../utils/pokerLanguage.js';
 import rateLimit from 'express-rate-limit';
 import { db } from '../config/firebase.js';
 import { extractJson } from '../utils/extractJson.js';
@@ -25,31 +32,76 @@ const router = Router();
 const claudeLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 20,
-  keyGenerator: (req) => req.user?.uid || req.ip, // Limita por usuário, não por IP
+  keyGenerator: (req) => req.user?.uid || 'anon', // Limita por usuário, não por IP
   message: { error: 'Limite de chamadas à IA atingido. Aguarde 10 minutos.' },
   skip: (req) => !req.user, // O middleware verifyToken já rejeita sem token
 });
 
-// Função auxiliar: chama a API do Claude
-async function callClaude(system, userMessage, maxTokens = 2000) {
+const CLAUDE_MODEL      = 'claude-haiku-5-5';
+// Precisa ficar abaixo de timeoutSeconds em functions/index.js (120s).
+const CLAUDE_TIMEOUT_MS = 110_000;
+// Janela em que vale a pena tentar de novo um 429/529 sem estourar o orçamento de tempo.
+const CLAUDE_RETRY_WINDOW_MS = 15_000;
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// Função auxiliar: chama a API do Claude.
+// allowTruncation: true para respostas de texto livre (chat), onde um corte por
+// max_tokens ainda é utilizável. Para JSON, truncamento é erro.
+async function callClaude(system, userMessage, maxTokens = 2000, { allowTruncation = false } = {}) {
   const apiKey = process.env.CLAUDE_API_KEY;
   if (!apiKey) throw new Error('CLAUDE_API_KEY não configurada no servidor.');
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    signal: AbortSignal.timeout(55_000), // 55s < timeout padrão da Cloud Function (60s)
-    headers: {
-      'Content-Type':      'application/json',
-      'x-api-key':         apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model:      'claude-haiku-4-5-20251001',
-      max_tokens: maxTokens,
-      system,
-      messages:   [{ role: 'user', content: userMessage }],
-    }),
-  });
+  // Debug opcional (CLAUDE_DEBUG=true). Nunca loga apiKey nem headers —
+  // só metadados de tamanho, para não vazar o segredo nos logs.
+  const debug = process.env.CLAUDE_DEBUG === 'true';
+  if (debug) {
+    console.log('[claude] →', JSON.stringify({
+      model: CLAUDE_MODEL,
+      maxTokens,
+      systemLen: (system || '').length,
+      userLen: userMessage.length,
+    }));
+  }
+
+  const body = {
+    model:      CLAUDE_MODEL,
+    max_tokens: maxTokens,
+    // Haiku 5.5 pensa por padrão (adaptive). effort low mantém a latência da
+    // geração de JSON perto da do Haiku 4.5 sem thinking.
+    output_config: { effort: 'low' },
+    messages:   [{ role: 'user', content: userMessage }],
+  };
+  if (system) body.system = system; // string vazia é rejeitada pela API
+
+  const started = Date.now();
+  let response;
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: AbortSignal.timeout(Math.max(1_000, CLAUDE_TIMEOUT_MS - (Date.now() - started))),
+      headers: {
+        'Content-Type':      'application/json',
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(body),
+    });
+
+    // 429 (rate limit) e 529 (overloaded) são transitórios: um único retry,
+    // e só se ainda houver folga no orçamento de tempo da requisição.
+    const transient = response.status === 429 || response.status === 529;
+    if (transient && attempt === 0 && Date.now() - started < CLAUDE_RETRY_WINDOW_MS) {
+      if (debug) console.log('[claude] retry após status', response.status);
+      await sleep(2_000);
+      continue;
+    }
+    break;
+  }
+
+  if (debug) {
+    console.log('[claude] ←', response.status, 'request-id:', response.headers.get('request-id'));
+  }
 
   if (!response.ok) {
     const err = await response.json().catch(() => ({}));
@@ -57,7 +109,62 @@ async function callClaude(system, userMessage, maxTokens = 2000) {
   }
 
   const data = await response.json();
-  return data.content?.[0]?.text || '';
+  if (debug) {
+    console.log('[claude] usage:', JSON.stringify(data.usage || {}), 'stop:', data.stop_reason);
+  }
+
+  if (data.stop_reason === 'refusal') throw new Error('REFUSAL');
+  if (data.stop_reason === 'max_tokens' && !allowTruncation) {
+    throw new Error(`JSON truncado: resposta atingiu max_tokens=${maxTokens}`);
+  }
+  // A resposta pode começar com blocos "thinking" — ler por tipo, nunca por posição.
+  return (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+}
+
+// Resposta de erro padronizada para falhas da IA. Nunca repassa a mensagem
+// crua da API ao cliente (ela vai para o log).
+function sendClaudeError(res, err, context) {
+  console.error(`Erro ao ${context}:`, err.message);
+  if (err.name === 'TimeoutError') {
+    return res.status(504).json({ error: 'A IA demorou demais para responder. Tente novamente.' });
+  }
+  if (err.message === 'REFUSAL') {
+    return res.status(422).json({ error: 'A IA não pôde gerar este conteúdo. Tente reformular.' });
+  }
+  if (err.message.includes('JSON')) {
+    return res.status(502).json({ error: 'IA retornou formato inválido. Tente novamente.' });
+  }
+  return res.status(500).json({ error: 'Erro ao falar com a IA. Tente novamente.' });
+}
+
+// Erros de cobrança/saldo da Anthropic → conteúdo de fallback em vez de erro.
+function isBillingError(err) {
+  const m = err.message || '';
+  return m.includes('credit') || m.includes('billing') || m.includes('balance');
+}
+
+// Valida o body de /lesson e /lesson-exercises. Retorna mensagem de erro ou null.
+// title/description vão para o prompt E para o cache global lessons/day_X —
+// por isso os limites de tamanho e o day inteiro no range do currículo.
+function validateLessonBody({ day, title, description = '', category }) {
+  if (!Number.isInteger(day) || day < 1 || day > 91) return 'day deve ser um inteiro entre 1 e 91.';
+  if (typeof title !== 'string' || !title.trim() || title.length > 120) return 'title é obrigatório (máx. 120 caracteres).';
+  if (typeof description !== 'string' || description.length > 400) return 'description deve ter no máximo 400 caracteres.';
+  if (typeof category !== 'string' || !category.trim() || category.length > 20) return 'category é obrigatório.';
+  return null;
+}
+
+// Regras de vocabulário e formato compartilhadas pelos 3 endpoints de geração.
+const POKER_TERMS_RULES = `IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os traduza. Exemplos obrigatórios: call (nunca "chamar"), fold (nunca "dobrar"), raise (nunca "aumentar"), check (nunca "passar"), bet (nunca "apostar" quando for jargão), bluff, range, equity, pot odds, EV, GTO, c-bet, barrel, float, squeeze, 3-bet, 4-bet, flop, turn, river, showdown, stack, blinds, ante, BTN, CO, HJ, UTG, BB, SB, overbet, check-raise, value bet, hand, board, outs, straight (nunca "reta" ou "sequência reta"), flush (nunca "cor"), full house (nunca "mão cheia"). EXCEÇÃO: three of a kind feito com pocket pair = "trinca" (nunca "set" nem "sets"). Mãos borderline = "mãos marginais" (nunca "mãos margem"). Nunca use "call feliz" — use "call", "call especulativo" ou descreva a situação.
+Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
+Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
+Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
+Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+
+function buildSystemPrompt(isCashGame, { withNarrativeRules = false } = {}) {
+  return `Você é um coach de poker profissional especializado em ${isCashGame ? 'cash game (NL Hold\'em)' : 'torneios de poker (MTT)'}.
+Crie conteúdo didático rico em português brasileiro, com linguagem clara para iniciantes a intermediários.
+${POKER_TERMS_RULES}${withNarrativeRules ? '\n' + POKER_BR_NARRATIVE_PROMPT : ''}`;
 }
 
 // Conteúdo de exemplo usado como fallback quando a API está indisponível
@@ -152,11 +259,10 @@ function getFallbackLesson(day, title, description, category, isCashGame = false
 // Fase 1 (rápida): gera teoria, pontos-chave e dica (~10s).
 // A fase 2 (exercícios) é disparada em paralelo pelo frontend.
 router.post('/lesson', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
-  const { day, title, description, category, forceNew = false } = req.body;
+  const { day, title, description = '', category, forceNew = false } = req.body;
 
-  if (!day || !title || !category) {
-    return res.status(400).json({ error: 'day, title e category são obrigatórios.' });
-  }
+  const invalid = validateLessonBody(req.body);
+  if (invalid) return res.status(400).json({ error: invalid });
 
   // ── Cache global no Firestore ─────────────────────────────────
   if (!forceNew) {
@@ -174,13 +280,7 @@ router.post('/lesson', verifyToken, requireActiveAccess, claudeLimiter, async (r
   }
 
   const isCashGame = day === 91;
-  const system = `Você é um coach de poker profissional especializado em ${isCashGame ? 'cash game (NL Hold\'em)' : 'torneios de poker (MTT)'}.
-Crie conteúdo didático rico em português brasileiro, com linguagem clara para iniciantes a intermediários.
-IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os traduza. Exemplos obrigatórios: call (nunca "chamar"), fold (nunca "dobrar"), raise (nunca "aumentar"), check (nunca "passar"), bet (nunca "apostar" quando for jargão), bluff, range, equity, pot odds, EV, GTO, c-bet, barrel, float, squeeze, 3-bet, 4-bet, flop, turn, river, showdown, stack, blinds, ante, BTN, CO, HJ, UTG, BB, SB, overbet, check-raise, value bet, hand, board, outs.
-Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
-Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
-Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
-Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+  const system = buildSystemPrompt(isCashGame);
 
   const contextPrefix = isCashGame
     ? 'Contexto: Cash game NL Hold\'em, stacks profundos (100–200bb), sem antes.'
@@ -200,7 +300,8 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 }`;
 
   try {
-    const text = await callClaude(system, prompt, 1500);
+    // Tokenizer do Haiku 5.5 conta ~30% a mais que o 4.5 — limites reajustados.
+    const text = await callClaude(system, prompt, 2500);
     console.log('Resposta IA fase 1 (primeiros 200 chars):', text.slice(0, 200));
 
     const lesson = extractJson(text);
@@ -219,19 +320,12 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 
     res.json({ lesson: { theory: lesson.theory, keyPoints: lesson.keyPoints, tip: lesson.tip } });
   } catch (err) {
-    console.error('Erro ao gerar teoria da lição:', err.message);
-    if (err.name === 'TimeoutError') {
-      return res.status(504).json({ error: 'A IA demorou mais de 55s. Tente novamente.' });
-    }
-    if (err.message.includes('credit') || err.message.includes('billing') || err.message.includes('balance')) {
+    if (isBillingError(err)) {
       console.log('⚠️  Usando conteúdo de fallback (verifique o saldo na Anthropic)');
       const fb = getFallbackLesson(day, title, description, category, isCashGame);
       return res.json({ lesson: { theory: fb.theory, keyPoints: fb.keyPoints, tip: fb.tip }, fallback: true });
     }
-    if (err.message.includes('JSON')) {
-      return res.status(502).json({ error: 'IA retornou formato inválido. Tente novamente.' });
-    }
-    res.status(500).json({ error: err.message });
+    sendClaudeError(res, err, 'gerar teoria da lição');
   }
 });
 
@@ -239,11 +333,10 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 // Fase 2 (pesada): gera quiz, simulações e treinamento (~40s).
 // Disparado em background pelo frontend enquanto o usuário lê a teoria.
 router.post('/lesson-exercises', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
-  const { day, title, description, category, forceNew = false } = req.body;
+  const { day, title, description = '', category, forceNew = false } = req.body;
 
-  if (!day || !title || !category) {
-    return res.status(400).json({ error: 'day, title e category são obrigatórios.' });
-  }
+  const invalid = validateLessonBody(req.body);
+  if (invalid) return res.status(400).json({ error: invalid });
 
   // ── Cache global no Firestore ─────────────────────────────────
   if (!forceNew) {
@@ -264,13 +357,7 @@ router.post('/lesson-exercises', verifyToken, requireActiveAccess, claudeLimiter
   }
 
   const isCashGame = day === 91;
-  const system = `Você é um coach de poker profissional especializado em ${isCashGame ? 'cash game (NL Hold\'em)' : 'torneios de poker (MTT)'}.
-Crie conteúdo didático rico em português brasileiro, com linguagem clara para iniciantes a intermediários.
-IMPORTANTE: Mantenha SEMPRE os termos técnicos do poker em inglês, nunca os traduza. Exemplos obrigatórios: call (nunca "chamar"), fold (nunca "dobrar"), raise (nunca "aumentar"), check (nunca "passar"), bet (nunca "apostar" quando for jargão), bluff, range, equity, pot odds, EV, GTO, c-bet, barrel, float, squeeze, 3-bet, 4-bet, flop, turn, river, showdown, stack, blinds, ante, BTN, CO, HJ, UTG, BB, SB, overbet, check-raise, value bet, hand, board, outs.
-Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
-Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
-Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
-Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+  const system = buildSystemPrompt(isCashGame, { withNarrativeRules: true });
 
   const contextRule = isCashGame
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: Todas as simulações de mãos devem refletir NL Hold'em cash game: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds durante a sessão. Mencione rake/rakeback quando fizer sentido pedagógico.`
@@ -286,6 +373,7 @@ ${contextRule}
 1. "correct": índice 0-based da opção correta. A "explanation" DEVE confirmar exatamente essa opção.
 2. O quiz tem EXATAMENTE 1 pergunta por nível (array com 1 elemento).
 3. "narrative" de cada simulação: 4-5 parágrafos de NARRAÇÃO ENVOLVENTE descrevendo como a mão se desenvolveu street por street — contexto do jogo, raciocínio dos jogadores, leituras de range, dinâmica da mesa. Linguagem de comentarista de poker ao vivo. NÃO revele a resposta correta. Termine no momento exato de decisão.
+4. As "options" das simulações DEVEM ser ações REAIS e VÁLIDAS na situação descrita. NUNCA inclua uma ação impossível (ex: "Check" quando Hero já apostou, "Call" quando não há aposta, "Bet" quando há aposta adversária). Se uma ação não for possível naquele momento, substitua por outra ação válida e distinta.
 
 Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 {
@@ -362,11 +450,36 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 }`;
 
   try {
-    const text = await callClaude(system, prompt, 6500);
+    // 6500 truncava JSON com Haiku 4.5; o tokenizer do 5.5 conta ~30% a mais.
+    const text = await callClaude(system, prompt, 12000);
     console.log('Resposta IA fase 2 (primeiros 200 chars):', text.slice(0, 200));
 
     const exercises = extractJson(text);
     if (!exercises) throw new Error('JSON');
+
+    // ── Pipeline de linguagem poker brasileiro ────────────────────────────
+    for (const level of ['easy', 'medium', 'hard']) {
+      const sim = exercises.handSimulations?.[level];
+      if (!sim?.narrative) continue;
+
+      sim.narrative = normalizePokerLanguage(sim.narrative);
+
+      const { isValid, issues } = validatePokerLanguage(sim.narrative);
+      if (!isValid) {
+        console.warn(`[pokerLanguage] lesson-exercises day=${day} ${level}:`,
+          issues.map(i => `${i.forbiddenTerm}(${i.severity})`).join(', '));
+      }
+
+      if (strictPokerLanguageMode && issues.some(i => i.severity === 'high')) {
+        const reviewPrompt = POKER_BR_REVIEW_PROMPT_TEMPLATE.replace('{{NARRATIVE}}', sim.narrative);
+        try {
+          const revised = await callClaude(undefined, reviewPrompt, 1200, { allowTruncation: true });
+          if (revised) sim.narrative = revised.trim();
+        } catch (e) {
+          console.warn('[pokerLanguage] revisão IA falhou, usando versão normalizada:', e.message);
+        }
+      }
+    }
 
     if (!forceNew) {
       try {
@@ -381,11 +494,7 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 
     res.json({ exercises: { quiz: exercises.quiz, handSimulations: exercises.handSimulations, infiniteTraining: exercises.infiniteTraining } });
   } catch (err) {
-    console.error('Erro ao gerar exercícios da lição:', err.message);
-    if (err.name === 'TimeoutError') {
-      return res.status(504).json({ error: 'A IA demorou mais de 55s gerando exercícios. Tente novamente.' });
-    }
-    if (err.message.includes('credit') || err.message.includes('billing') || err.message.includes('balance')) {
+    if (isBillingError(err)) {
       console.log('⚠️  Usando conteúdo de fallback (verifique o saldo na Anthropic)');
       const fb = getFallbackLesson(day, title, description, category, isCashGame);
       return res.json({
@@ -393,10 +502,7 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
         fallback: true,
       });
     }
-    if (err.message.includes('JSON')) {
-      return res.status(502).json({ error: 'IA retornou formato inválido nos exercícios. Tente novamente.' });
-    }
-    res.status(500).json({ error: err.message });
+    sendClaudeError(res, err, 'gerar exercícios da lição');
   }
 });
 
@@ -412,6 +518,9 @@ router.post('/chat', verifyToken, requireActiveAccess, claudeLimiter, async (req
   if (message.length > 1000) {
     return res.status(400).json({ error: 'Mensagem deve ter no máximo 1000 caracteres.' });
   }
+
+  // context é o título da lição atual — entra no prompt, então tem tipo e tamanho limitados
+  const safeContext = typeof context === 'string' && context.length <= 200 ? context : null;
 
   const system = `Você é um coach de poker especialista em torneios e cash games.
 Responda em português brasileiro, de forma didática e fluida — como um professor conversando com o aluno.
@@ -430,16 +539,15 @@ REGRAS OBRIGATÓRIAS:
 4. Foco em GTO, exploits, EV e mental game.
 5. Máximo de 250 palavras. Se a pergunta não for sobre poker, redirecione educadamente.`;
 
-  const fullMessage = context
-    ? `Contexto: estou estudando "${context}"\n\nPergunta: ${message}`
+  const fullMessage = safeContext
+    ? `Contexto: estou estudando "${safeContext}"\n\nPergunta: ${message}`
     : message;
 
   try {
-    const reply = await callClaude(system, fullMessage, 800);
+    const reply = await callClaude(system, fullMessage, 1200, { allowTruncation: true });
     res.json({ reply });
   } catch (err) {
-    console.error('Erro no chat:', err.message);
-    res.status(500).json({ error: err.message });
+    sendClaudeError(res, err, 'responder no chat');
   }
 });
 
@@ -448,18 +556,12 @@ REGRAS OBRIGATÓRIAS:
 // Sem cache — cada chamada deve ser uma mão nova.
 router.post('/practice-hand', verifyToken, requireActiveAccess, claudeLimiter, async (req, res) => {
   const { topicTitle, context = 'tournament' } = req.body;
-  if (!topicTitle || typeof topicTitle !== 'string') {
-    return res.status(400).json({ error: 'topicTitle é obrigatório.' });
+  if (!topicTitle || typeof topicTitle !== 'string' || !topicTitle.trim() || topicTitle.length > 150) {
+    return res.status(400).json({ error: 'topicTitle é obrigatório (máx. 150 caracteres).' });
   }
 
   const isCash = context === 'cash';
-  const system = `Você é um coach de poker profissional especializado em ${isCash ? 'cash game (NL Hold\'em)' : 'torneios de poker (MTT)'}.
-Crie simulações realistas de mãos em português brasileiro.
-IMPORTANTE: Mantenha SEMPRE os termos técnicos em inglês (call, fold, raise, check, bet, range, equity, EV, GTO, c-bet, flop, turn, river, etc). Nunca os traduza.
-Sempre retorne JSON válido, sem markdown extra, sem texto fora do JSON.
-Use notação de cartas: A♠ K♥ Q♦ J♣ T=10.
-Para naipes no texto (fora da notação de carta): Espadas (♠), Copas (♥), Ouros (♦), Paus (♣) — NUNCA "corações"; o naipe ♥ é sempre "Copas" em poker.
-Não use termos compostos híbridos como "3-bet-happy", "fold-equity-aware" etc. Use termos poker padrão ou descreva o conceito em português.`;
+  const system = buildSystemPrompt(isCash, { withNarrativeRules: true });
 
   const contextRule = isCash
     ? `0. CONTEXTO OBRIGATÓRIO — CASH GAME: stacks profundos (100–200bb), sem antes, sem pressão de bubble ou ICM, sem aumento de blinds. Mencione rake quando relevante.`
@@ -474,6 +576,7 @@ ${contextRule}
 3. "correct": índice 0-based da opção correta. A "explanation" DEVE confirmar exatamente essa opção.
 4. A pergunta deve exigir range thinking, MDF, blockers ou cálculo avançado — nível DIFÍCIL.
 5. Varie posições, mãos e boards a cada chamada para gerar mãos sempre diferentes.
+6. As "options" DEVEM ser ações REAIS e VÁLIDAS na situação descrita. NUNCA inclua ação impossível (ex: "Check" quando Hero já apostou, "Call" quando não há aposta, "Bet" quando há aposta adversária). Se uma ação não for possível naquele momento, substitua por outra ação válida e distinta.
 
 Retorne APENAS este JSON válido (sem markdown):
 {
@@ -496,19 +599,22 @@ Retorne APENAS este JSON válido (sem markdown):
 }`;
 
   try {
-    const text = await callClaude(system, prompt, 3000);
+    const text = await callClaude(system, prompt, 4500);
     const sim = extractJson(text);
     if (!sim || !sim.options || sim.correct === undefined) throw new Error('JSON');
+
+    if (sim.narrative) {
+      sim.narrative = normalizePokerLanguage(sim.narrative);
+      const { isValid, issues } = validatePokerLanguage(sim.narrative);
+      if (!isValid) {
+        console.warn('[pokerLanguage] practice-hand:',
+          issues.map(i => `${i.forbiddenTerm}(${i.severity})`).join(', '));
+      }
+    }
+
     res.json({ sim });
   } catch (err) {
-    console.error('Erro ao gerar mão de prática:', err.message);
-    if (err.name === 'TimeoutError') {
-      return res.status(504).json({ error: 'A IA demorou mais de 55s. Tente novamente.' });
-    }
-    if (err.message.includes('JSON')) {
-      return res.status(502).json({ error: 'IA retornou formato inválido. Tente novamente.' });
-    }
-    res.status(500).json({ error: err.message });
+    sendClaudeError(res, err, 'gerar mão de prática');
   }
 });
 

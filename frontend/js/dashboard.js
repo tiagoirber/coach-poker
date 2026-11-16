@@ -22,7 +22,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 
   // Carrega tudo em paralelo (mais rápido que sequencial)
   await Promise.all([
-    loadUserData(user),
+    loadUserData(),
     loadProgress(),
     loadLeaderboard(),
   ]);
@@ -32,7 +32,7 @@ fbAuth.onAuthStateChanged(async (user) => {
 });
 
 // ── Carrega dados do usuário ──────────────────────────────────
-async function loadUserData(user) {
+async function loadUserData() {
   try {
     const { user: data } = await userApi.getMe();
 
@@ -61,6 +61,9 @@ async function loadProgress() {
 
     // Marca os dias concluídos no Set local
     completedDays = new Set(lessons.map(l => l.day));
+    // Sincroniza a cópia local usada pelo modo GERAL do treino infinito (lesson.js),
+    // senão um navegador novo nunca tem a lista até concluir uma lição nele.
+    try { localStorage.setItem('completedDays', JSON.stringify([...completedDays])); } catch {}
 
     // Atualiza cards de estatísticas
     document.getElementById('current-day').textContent     = progress.currentDay;
@@ -192,10 +195,4 @@ window.filterWeek = function(value) {
 // ── Navega para a página da lição ─────────────────────────────
 window.openLesson = function(day) {
   window.location.href = `/pages/lesson.html?day=${day}`;
-};
-
-// ── Modal de conclusão ────────────────────────────────────────
-window.closeModal = function() {
-  document.getElementById('modal-complete').classList.add('hidden');
-  document.getElementById('modal-complete').classList.remove('flex');
 };

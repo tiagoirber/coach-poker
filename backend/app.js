@@ -15,11 +15,19 @@ const __dirname  = dirname(__filename);
 
 const app = express();
 
+// Atrás do Firebase Hosting + Cloud Run o IP real vem em X-Forwarded-For.
+// Sem isso o rate limiter global usa o IP do proxy e vira um bucket coletivo.
+app.set('trust proxy', true);
+
+// Esta CSP só vale quando o Express serve o frontend (dev local) — em produção
+// o Firebase Hosting serve os HTMLs direto e esta política não é aplicada.
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
-      scriptSrc:   ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://www.gstatic.com", "https://apis.google.com"],
+      scriptSrc:   ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com", "https://www.gstatic.com", "https://apis.google.com", "https://cdnjs.cloudflare.com"],
+      // O default do helmet é 'none', o que bloqueia todos os onclick inline do frontend.
+      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc:    ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
       connectSrc:  ["'self'", "https://api.anthropic.com", "https://*.googleapis.com", "https://*.firebaseio.com", "wss://*.firebaseio.com", "https://securetoken.googleapis.com"],
       imgSrc:      ["'self'", "data:", "https:"],
@@ -56,6 +64,9 @@ app.use(rateLimit({
   message: { error: 'Muitas requisições. Tente novamente em 15 minutos.' },
   standardHeaders: true,
   legacyHeaders: false,
+  // 'trust proxy: true' é intencional aqui (API autenticada; o limite por
+  // usuário está em claudeLimiter) — silencia o aviso de proxy permissivo.
+  validate: { trustProxy: false },
 }));
 
 app.use(express.json({ limit: '10kb' }));
@@ -78,7 +89,7 @@ app.use((req, res) => {
   res.status(404).json({ error: `Rota não encontrada: ${req.method} ${req.path}` });
 });
 
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error('Erro interno:', err.message);
   const isProd = process.env.NODE_ENV === 'production';
   res.status(500).json({ error: 'Erro interno do servidor.', detail: isProd ? undefined : err.message });

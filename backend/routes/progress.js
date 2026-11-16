@@ -24,6 +24,14 @@ const XP_BY_CATEGORY = {
   ICM:      30,
 };
 
+const DAY_MS    = 24 * 60 * 60 * 1000;
+const STREAK_TZ = 'America/Sao_Paulo';
+
+// 'YYYY-MM-DD' no fuso do aluno — base da comparação de streak.
+function calendarDay(ms) {
+  return new Date(ms).toLocaleDateString('en-CA', { timeZone: STREAK_TZ });
+}
+
 // ── GET /api/progress/me ──────────────────────────────────────
 // Retorna um resumo do progresso do usuário logado:
 // dia atual, XP total, streak, % de conclusão.
@@ -103,14 +111,18 @@ router.post('/complete', verifyToken, requireActiveAccess, async (req, res) => {
       const userSnap = await tx.get(userRef);
       const userData = userSnap.data() || {};
 
-      // Calcula o novo streak
-      // Se o último login foi ontem → incrementa; senão → reseta para 1
-      const lastLogin    = userData.lastLoginAt ? new Date(userData.lastLoginAt) : null;
-      const today        = new Date();
-      const yesterday    = new Date(today); yesterday.setDate(today.getDate() - 1);
-      const wasYesterday = lastLogin
-        && lastLogin.toDateString() === yesterday.toDateString();
-      const newStreak    = wasYesterday ? (userData.streak || 0) + 1 : 1;
+      // Calcula o novo streak comparando dias-calendário no fuso do aluno
+      // (a Cloud Function roda em UTC; "ontem" em UTC não é "ontem" no Brasil).
+      // Última conclusão hoje → mantém; ontem → incrementa; antes → reseta para 1.
+      // lastLoginAt só é escrito aqui e no registro — na prática é "última conclusão".
+      const nowMs        = Date.now();
+      const todayKey     = calendarDay(nowMs);
+      const yesterdayKey = calendarDay(nowMs - DAY_MS);
+      const lastKey      = userData.lastLoginAt ? calendarDay(Date.parse(userData.lastLoginAt)) : null;
+      const prevStreak   = userData.streak || 0;
+      const newStreak    = lastKey === todayKey     ? Math.max(prevStreak, 1)
+                         : lastKey === yesterdayKey ? prevStreak + 1
+                         : 1;
 
       const xpGained = XP_BY_CATEGORY[category];
       const now      = new Date().toISOString();
@@ -154,11 +166,22 @@ router.post('/complete', verifyToken, requireActiveAccess, async (req, res) => {
 
 // ── GET /api/progress/history ─────────────────────────────────
 // Retorna o histórico completo de lições concluídas pelo usuário.
+// Com ?day=N retorna só esse dia (1 leitura em vez do histórico inteiro).
 router.get('/history', verifyToken, requireActiveAccess, async (req, res) => {
   try {
-    const snapshot = await db
-      .collection('users').doc(req.user.uid)
-      .collection('completedLessons')
+    const completedRef = db.collection('users').doc(req.user.uid).collection('completedLessons');
+
+    if (req.query.day !== undefined) {
+      const day = Number(req.query.day);
+      if (!Number.isInteger(day) || day < 1 || day > 91) {
+        return res.status(400).json({ error: 'day deve ser um inteiro entre 1 e 91.' });
+      }
+      const doc = await completedRef.doc(`day_${day}`).get();
+      const lessons = doc.exists ? [doc.data()] : [];
+      return res.json({ lessons, total: lessons.length });
+    }
+
+    const snapshot = await completedRef
       .orderBy('completedAt', 'desc')
       .get();
 

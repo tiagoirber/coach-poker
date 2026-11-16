@@ -5,8 +5,13 @@
 // =============================================================
 
 import { fbAuth, CURRICULUM, CATEGORY_COLORS, XP_BY_CATEGORY, LESSON_CACHE_VER } from './config.js';
-import { claudeApi, progressApi, userApi } from './api.js';
+import { claudeApi, progressApi } from './api.js';
 import { applyGlossary } from './glossary.js';
+
+// Fallback quando o CDN do DOMPurify não carrega: escapa em vez de devolver cru.
+const escapeHtml = (s) => s.replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
 
 // Sanitiza recursivamente todos os campos string de um objeto vindo da IA.
 // Strips qualquer HTML — o conteúdo da IA deve ser texto puro; o HTML é
@@ -15,7 +20,7 @@ function sanitizeAiData(val) {
   if (typeof val === 'string') {
     return typeof DOMPurify !== 'undefined'
       ? DOMPurify.sanitize(val, { ALLOWED_TAGS: [] })
-      : val;
+      : escapeHtml(val);
   }
   if (Array.isArray(val)) return val.map(sanitizeAiData);
   if (val && typeof val === 'object') {
@@ -37,7 +42,6 @@ let quizState = {
 };
 let simAnswered      = { easy:false, medium:false, hard:false };
 let infiniteAnswered = false;
-let feynmanDone      = false;
 let nextLesson     = null;
 // Cancela uma geração de mão em voo se o usuário disparar outra antes do
 // resultado chegar (ex: clica FOCADO depois GERAL). Sem isso, a resposta
@@ -132,20 +136,9 @@ window.advanceStep = function(fromStepId) {
 
 window.goToStep = function(stepId) {
   if (stepId === currentStep) return;
-  if (completedSteps.has(stepId)) {
-    showStep(stepId);
-    return;
-  }
-  // Pulo para frente — pedir confirmação
-  const target = STEPS.find(s => s.id === stepId);
-  const ok = window.confirm(
-    `Pular para "${target.label}"? As etapas anteriores serão marcadas como concluídas.`
-  );
-  if (!ok) return;
-  // marca todas as anteriores como concluídas
-  const idx = STEPS.findIndex(s => s.id === stepId);
-  for (let i = 0; i < idx; i++) completedSteps.add(STEPS[i].id);
-  showStep(stepId);
+  // Progressão linear e bloqueada (golden path #4): só navega para etapas já
+  // concluídas. Lição já concluída libera todas (ver checkIfCompleted).
+  if (completedSteps.has(stepId)) showStep(stepId);
 };
 
 // ── Init ──────────────────────────────────────────────────────
@@ -160,7 +153,6 @@ fbAuth.onAuthStateChanged(async (user) => {
   renderHeader();
   await checkIfCompleted();
   await loadLesson();
-  initFeynman();
 });
 
 // ── Header ────────────────────────────────────────────────────
@@ -180,7 +172,8 @@ function renderHeader() {
 
 async function checkIfCompleted() {
   try {
-    const { lessons } = await progressApi.getHistory();
+    // Só o dia atual — 1 leitura em vez do histórico inteiro
+    const { lessons } = await progressApi.getHistory(currentTopic.day);
     alreadyDone = lessons.some(l => l.day === currentTopic.day);
     if (alreadyDone) {
       document.getElementById('btn-complete').classList.add('hidden');
@@ -218,7 +211,8 @@ async function loadLesson() {
   try {
     const { lesson } = await claudeApi.getLesson(day, title, description, category, forceNew);
     lessonData = sanitizeAiData(lesson);
-    localStorage.setItem(visitKey, visitCount + 1);
+    // A visita só conta quando a fase 2 também terminar (ver loadExercises):
+    // um reload após falha nos exercícios não deve virar forceNew e regenerar a teoria.
 
     document.getElementById('loading-state').classList.add('hidden');
     document.getElementById('lesson-content').classList.remove('hidden');
@@ -232,13 +226,13 @@ async function loadLesson() {
     showStep(currentStep);
 
     // Fase 2: exercícios em background
-    loadExercises(day, title, description, category, forceNew, cacheKey);
+    loadExercises(day, title, description, category, forceNew, cacheKey, visitKey, visitCount);
   } catch (err) {
     document.getElementById('loading-state').innerHTML = `
       <div class="text-center py-20">
         <p class="text-5xl mb-4">⚠️</p>
         <p class="text-red-400 mb-2 font-semibold">Erro ao carregar lição</p>
-        <p class="text-gray-500 text-sm mb-6">${err.message}</p>
+        <p class="text-gray-500 text-sm mb-6">${sanitizeAiData(err.message || '')}</p>
         <button onclick="location.reload()"
                 class="px-6 py-2 rounded-lg text-sm font-semibold"
                 style="background:#0e1c10; border:1px solid rgba(255,255,255,0.1); color:#9ca3af;">
@@ -249,10 +243,11 @@ async function loadLesson() {
 }
 
 // ── Load exercises (fase 2, background) ──────────────────────
-async function loadExercises(day, title, description, category, forceNew, cacheKey) {
+async function loadExercises(day, title, description, category, forceNew, cacheKey, visitKey, visitCount) {
   try {
     const { exercises } = await claudeApi.getLessonExercises(day, title, description, category, forceNew);
     lessonData = { ...lessonData, ...sanitizeAiData(exercises) };
+    localStorage.setItem(visitKey, visitCount + 1);
 
     renderQuizCard('easy');
     renderQuizCard('medium');
@@ -295,7 +290,7 @@ window.loadExercisesRetry = function() {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '<p class="text-gray-500 animate-pulse text-sm py-6 text-center">⏳ Gerando exercícios...</p>';
   });
-  loadExercises(day, title, description, category, forceNew, cacheKey);
+  loadExercises(day, title, description, category, forceNew, cacheKey, visitKey, visitCount);
 };
 
 function renderLesson() {
@@ -343,7 +338,7 @@ function heroCardsHtml(str) {
   if (!cards.length) return str ? `<span class="text-white text-sm font-mono">${str}</span>` : '';
   if (cards.length === 1) return cardHtml(cards[0].rank, cards[0].suit);
   const [c1, c2] = cards;
-  return `<span style="display:inline-block;transform:rotate(-9deg) translateY(7px);margin-right:-20px;z-index:1;position:relative;">${cardHtml(c1.rank, c1.suit)}</span><span style="display:inline-block;transform:rotate(9deg) translateY(7px);z-index:2;position:relative;">${cardHtml(c2.rank, c2.suit)}</span>`;
+  return `<span style="display:inline-block;transform:rotate(-9deg) translateY(10px);margin-right:-28px;z-index:1;position:relative;">${cardHtml(c1.rank, c1.suit)}</span><span style="display:inline-block;transform:rotate(9deg) translateY(10px);z-index:2;position:relative;">${cardHtml(c2.rank, c2.suit)}</span>`;
 }
 
 function renderPokerTable(sim) {
@@ -355,7 +350,7 @@ function renderPokerTable(sim) {
        <div class="pcard-back" style="opacity:0.45;"></div>`;
 
   return `
-    <div class="relative mb-5 select-none"
+    <div class="relative select-none"
          style="border-radius:36px;
                 background:linear-gradient(160deg,#4a2800 0%,#6b3e10 40%,#4a2800 70%,#2e1600 100%);
                 padding:10px;
@@ -363,7 +358,7 @@ function renderPokerTable(sim) {
       <div class="relative overflow-hidden"
            style="border-radius:28px;
                   min-height:270px;
-                  background:radial-gradient(ellipse 80% 65% at 50% 45%, #27723a 0%, #1b5229 40%, #0e3318 72%, #061209 100%);
+                  background:radial-gradient(ellipse 80% 65% at 50% 45%, #3db861 0%, #2a8a47 35%, #1a6030 65%, #0d3a1a 100%);
                   padding:20px 18px;">
         <div class="absolute inset-0 pointer-events-none"
              style="border-radius:28px;
@@ -375,7 +370,7 @@ function renderPokerTable(sim) {
                     box-shadow:inset 0 0 60px rgba(0,0,0,0.45);"></div>
         <div class="flex flex-col items-center mb-4">
           <p class="text-xs font-bold tracking-widest uppercase mb-2" style="color:rgba(255,255,255,0.22);">${sim.villainPosition || 'Vilão'}</p>
-          <div style="position:relative; width:92px; height:76px; margin:0 auto;">
+          <div style="position:relative; width:140px; height:115px; margin:0 auto;">
             <div class="pcard-back" style="position:absolute; left:0; top:0; transform:rotate(-10deg); transform-origin:50% 100%;"></div>
             <div class="pcard-back" style="position:absolute; right:0; top:0; transform:rotate(10deg); transform-origin:50% 100%;"></div>
           </div>
@@ -407,29 +402,6 @@ function renderPokerTable(sim) {
     </div>`;
 }
 
-// ── STREETS ───────────────────────────────────────────────────
-function renderStreets(streets) {
-  if (!streets?.length) return '';
-  return `
-    <div class="mb-4 rounded-lg p-3 space-y-3"
-         style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05);">
-      <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Histórico da Mão</p>
-      ${streets.map(st => `
-        <div class="street-item">
-          <div class="flex items-center gap-2 mb-1">
-            <div class="w-3 h-3 rounded-full flex-shrink-0" style="background:rgba(200,160,69,0.5);"></div>
-            <span class="text-xs font-bold text-yellow-400">${st.name}</span>
-          </div>
-          <div class="ml-5 space-y-0.5">
-            ${(st.actions || []).map(a => {
-              const isHero = a.includes('(Você)') || a.includes('Hero') || a.endsWith('?');
-              return `<p class="text-xs ${isHero ? 'text-white font-semibold' : 'text-gray-500'}">${a}</p>`;
-            }).join('')}
-          </div>
-        </div>`).join('')}
-    </div>`;
-}
-
 // ── ACTION BUTTON TYPE ────────────────────────────────────────
 function actionClass(label) {
   // Remove prefixos "A) ", "B) " que a IA às vezes adiciona
@@ -444,82 +416,77 @@ function actionClass(label) {
 }
 
 // ── SIMULATION RENDERING ──────────────────────────────────────
-function renderSimLevel(level) {
-  const sim       = lessonData.handSimulations?.[level];
-  const container = document.getElementById(`sim-${level}`);
-  if (!sim) { container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
+// Compartilhado pelas simulações da lição (suffix = 'easy'|'medium'|'hard') e
+// pelo treino infinito (suffix = 'inf'). answerCall(oi) devolve o onclick da opção.
+function simBodyHtml(sim, suffix, answerCall) {
+  const analysis = sim.analysis || {};
 
-  const analysis   = sim.analysis || {};
-
-  // Streets summary for the collapsible
   const streetsSummary = (sim.streets || []).map(st => `
     <div class="flex gap-2 text-xs leading-relaxed">
       <span class="font-bold whitespace-nowrap" style="color:#c8a045;">${st.name}:</span>
       <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
     </div>`).join('');
 
-  // Narrative paragraphs
-  const narrativeText = sim.narrative || sim.situation || '';
-  const narrativeHtml = narrativeText.split('\n').filter(Boolean)
+  const narrativeHtml = (sim.narrative || sim.situation || '').split('\n').filter(Boolean)
     .map(p => `<p>${applyGlossary(p)}</p>`).join('');
 
-  container.innerHTML = `
-
-    ${renderPokerTable(sim)}
-
-    <!-- ══ COMO A MÃO SE DESENVOLVEU ══ -->
-    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
-      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;">
-        <span>📖</span> Como a Mão se Desenvolveu
-      </h3>
-      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
-
-      ${streetsSummary ? `
-      <details class="mt-5">
-        <summary class="text-xs cursor-pointer select-none transition-colors hover:text-gray-300"
-                 style="color:#4b5563;">📋 Ver resumo das streets</summary>
-        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">
-          ${streetsSummary}
+  return `
+    <!-- ══ LAYOUT: MESA + NARRATIVA PARALELOS ══ -->
+    <div style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;">
+      <div style="flex:0 0 auto;">
+        ${renderPokerTable(sim)}
+      </div>
+      <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;">
+        <div class="rounded-xl p-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
+          <h3 class="text-sm font-bold mb-3 flex items-center gap-2" style="color:#c8a045;">
+            <span>📖</span> Como a Mão se Desenvolveu
+          </h3>
+          <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
+          ${streetsSummary ? `
+          <details class="mt-4">
+            <summary class="text-xs cursor-pointer select-none transition-colors hover:text-gray-300"
+                     style="color:#4b5563;">📋 Ver resumo das streets</summary>
+            <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">
+              ${streetsSummary}
+            </div>
+          </details>` : ''}
         </div>
-      </details>` : ''}
-    </div>
-
-    <!-- ══ DECISÃO ══ -->
-    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
-      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
-      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+        <div class="rounded-xl p-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+          <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+          <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+        </div>
+      </div>
     </div>
 
     <!-- ══ OPÇÕES ══ -->
-    <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-${level}">
+    <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-${suffix}">
       ${(sim.options || []).map((opt, oi) => `
-        <button onclick="answerSim('${level}',${oi},${sim.correct})"
-                id="sim-btn-${level}-${oi}"
+        <button onclick="${answerCall(oi)}"
+                id="sim-btn-${suffix}-${oi}"
                 class="${actionClass(opt)}"
                 style="font-size:14px; padding:10px 18px;">
           ${opt}
         </button>`).join('')}
     </div>
 
-    <!-- ══ FEEDBACK DE ACERTO/ERRO ══ -->
-    <div id="sim-feedback-${level}" class="hidden mb-3"></div>
+    <div id="sim-feedback-${suffix}" class="hidden mb-3"></div>
 
     <!-- ══ ANÁLISE (hidden until answered) ══ -->
-    <div id="sim-analysis-${level}" class="hidden">
+    <div id="sim-analysis-${suffix}" class="hidden">
       <div class="flex gap-1 mb-3 flex-wrap">
-        <button onclick="setAnalysisTab('${level}','explanation')" id="ana-${level}-explanation" class="ana-tab active">📖 Explicação</button>
-        <button onclick="setAnalysisTab('${level}','ev')"          id="ana-${level}-ev"          class="ana-tab">📊 EV</button>
-        <button onclick="setAnalysisTab('${level}','gto')"         id="ana-${level}-gto"         class="ana-tab">⚖️ GTO</button>
+        <button onclick="setAnalysisTab('${suffix}','explanation')" id="ana-${suffix}-explanation" class="ana-tab active">📖 Explicação</button>
+        <button onclick="setAnalysisTab('${suffix}','ev')"          id="ana-${suffix}-ev"          class="ana-tab">📊 EV</button>
+        <button onclick="setAnalysisTab('${suffix}','gto')"         id="ana-${suffix}-gto"         class="ana-tab">⚖️ GTO</button>
       </div>
       <div class="rounded-xl p-4 text-sm" style="background:rgba(5,150,105,0.06); border:1px solid rgba(52,211,153,0.15);">
-        <div id="ana-${level}-explanation-content" class="text-gray-300 leading-relaxed space-y-2">
+        <div id="ana-${suffix}-explanation-content" class="text-gray-300 leading-relaxed space-y-2">
           ${(analysis.explanation || '').split('\n').filter(Boolean).map(p => `<p>${applyGlossary(p)}</p>`).join('')}
         </div>
-        <div id="ana-${level}-ev-content" class="hidden">
+        <div id="ana-${suffix}-ev-content" class="hidden">
           <p class="text-xs font-bold text-green-400 mb-2">VALOR ESPERADO (EV)</p>
           <p class="text-gray-300 font-mono text-xs leading-relaxed">${analysis.ev || '—'}</p>
         </div>
-        <div id="ana-${level}-gto-content" class="hidden">
+        <div id="ana-${suffix}-gto-content" class="hidden">
           <p class="text-xs font-bold text-blue-400 mb-2">FREQUÊNCIAS GTO</p>
           <p class="text-gray-300 text-sm leading-relaxed">${applyGlossary(analysis.gto || '—')}</p>
         </div>
@@ -527,56 +494,62 @@ function renderSimLevel(level) {
     </div>`;
 }
 
-window.answerSim = function(level, selected, correct) {
-  if (simAnswered[level]) return;
-  simAnswered[level] = true;
-  const sim = lessonData.handSimulations?.[level];
+// Pinta os botões, mostra o feedback e revela a análise. Retorna isCorrect.
+function revealSimAnswer(sim, suffix, selected, correct) {
   const isCorrect = selected === correct;
+  const good  = { bg: 'rgba(5,150,105,0.3)', border: 'rgba(52,211,153,0.6)', color: '#34d399' };
+  const bad   = { bg: 'rgba(239,68,68,0.3)', border: 'rgba(239,68,68,0.6)',  color: '#f87171' };
+  const paint = (btn, c) => { btn.style.background = c.bg; btn.style.borderColor = c.border; btn.style.color = c.color; };
 
   (sim.options || []).forEach((_, oi) => {
-    const btn = document.getElementById(`sim-btn-${level}-${oi}`);
+    const btn = document.getElementById(`sim-btn-${suffix}-${oi}`);
     if (!btn) return;
     btn.disabled = true;
-    if (oi === selected) {
-      if (isCorrect) { btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399'; }
-      else { btn.style.background = 'rgba(239,68,68,0.3)'; btn.style.borderColor = 'rgba(239,68,68,0.6)'; btn.style.color = '#f87171'; }
-    }
-    if (oi === correct && !isCorrect) {
-      btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399';
-    }
+    if (oi === selected) paint(btn, isCorrect ? good : bad);
+    if (oi === correct && !isCorrect) paint(btn, good);
   });
 
-  // ── Feedback visual de acerto / erro ─────────────────────────
   const correctLabel = (sim.options || [])[correct] || '';
-  const feedbackEl   = document.getElementById(`sim-feedback-${level}`);
+  const feedbackEl   = document.getElementById(`sim-feedback-${suffix}`);
   if (feedbackEl) {
-    if (isCorrect) {
-      feedbackEl.innerHTML = `
-        <div class="rounded-xl p-4 flex items-center gap-3"
-             style="background:rgba(5,150,105,0.2); border:2px solid rgba(52,211,153,0.5);">
-          <span class="text-3xl flex-shrink-0">✅</span>
-          <div>
-            <p class="font-bold text-lg" style="color:#34d399;">Você acertou!</p>
-            <p class="text-sm text-gray-300 mt-0.5">Excelente decisão — veja a análise completa abaixo.</p>
-          </div>
-        </div>`;
-    } else {
-      feedbackEl.innerHTML = `
-        <div class="rounded-xl p-4 flex items-center gap-3"
-             style="background:rgba(239,68,68,0.15); border:2px solid rgba(239,68,68,0.45);">
-          <span class="text-3xl flex-shrink-0">❌</span>
-          <div>
-            <p class="font-bold text-lg" style="color:#f87171;">Você errou.</p>
-            <p class="text-sm text-gray-300 mt-0.5">A ação correta era:
-              <strong style="color:#34d399;">${correctLabel}</strong>
-            </p>
-          </div>
-        </div>`;
-    }
+    feedbackEl.innerHTML = isCorrect
+      ? `<div class="rounded-xl p-4 flex items-center gap-3"
+              style="background:rgba(5,150,105,0.2); border:2px solid rgba(52,211,153,0.5);">
+           <span class="text-3xl flex-shrink-0">✅</span>
+           <div>
+             <p class="font-bold text-lg" style="color:#34d399;">Você acertou!</p>
+             <p class="text-sm text-gray-300 mt-0.5">Excelente decisão — veja a análise completa abaixo.</p>
+           </div>
+         </div>`
+      : `<div class="rounded-xl p-4 flex items-center gap-3"
+              style="background:rgba(239,68,68,0.15); border:2px solid rgba(239,68,68,0.45);">
+           <span class="text-3xl flex-shrink-0">❌</span>
+           <div>
+             <p class="font-bold text-lg" style="color:#f87171;">Você errou.</p>
+             <p class="text-sm text-gray-300 mt-0.5">A ação correta era:
+               <strong style="color:#34d399;">${correctLabel}</strong>
+             </p>
+           </div>
+         </div>`;
     feedbackEl.classList.remove('hidden');
   }
 
-  document.getElementById(`sim-analysis-${level}`)?.classList.remove('hidden');
+  document.getElementById(`sim-analysis-${suffix}`)?.classList.remove('hidden');
+  return isCorrect;
+}
+
+function renderSimLevel(level) {
+  const sim       = lessonData.handSimulations?.[level];
+  const container = document.getElementById(`sim-${level}`);
+  if (!sim) { container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
+  container.innerHTML = simBodyHtml(sim, level, (oi) => `answerSim('${level}',${oi},${sim.correct})`);
+}
+
+window.answerSim = function(level, selected, correct) {
+  if (simAnswered[level]) return;
+  simAnswered[level] = true;
+  const sim = lessonData.handSimulations?.[level] || {};
+  revealSimAnswer(sim, level, selected, correct);
 
   const nextStepId = STEP_NEXT[`sim-${level}`];
   if (nextStepId) {
@@ -598,10 +571,11 @@ window.answerSim = function(level, selected, correct) {
   }
 };
 
-window.setAnalysisTab = function(level, tab) {
+// suffix: 'easy' | 'medium' | 'hard' | 'inf'
+window.setAnalysisTab = function(suffix, tab) {
   ['explanation','ev','gto'].forEach(t => {
-    document.getElementById(`ana-${level}-${t}`)?.classList.toggle('active', t === tab);
-    document.getElementById(`ana-${level}-${t}-content`)?.classList.toggle('hidden', t !== tab);
+    document.getElementById(`ana-${suffix}-${t}`)?.classList.toggle('active', t === tab);
+    document.getElementById(`ana-${suffix}-${t}-content`)?.classList.toggle('hidden', t !== tab);
   });
 };
 
@@ -742,12 +716,8 @@ function renderTheory() {
 }
 
 // ── FEYNMAN ───────────────────────────────────────────────────
-function initFeynman() {
-  // Sem mínimos — o botão está sempre habilitado
-}
-
+// Sem mínimos — o botão está sempre habilitado
 window.submitFeynman = function() {
-  feynmanDone = true;
   const section = document.getElementById('feynman-section');
   section.innerHTML = `
     <div class="flex items-center gap-3">
@@ -800,7 +770,7 @@ window.startInfiniteHand = async function(mode) {
     const { sim } = await claudeApi.practiceHand(topicTitle, handContext, controller.signal);
     // Se outra chamada substituiu este controller, descarta a resposta tardia
     if (controller.signal.aborted) return;
-    renderInfiniteHand(sim, topicTitle, mode);
+    renderInfiniteHand(sanitizeAiData(sim), topicTitle, mode);
   } catch (err) {
     // AbortError é cancelamento intencional — não mostrar erro
     if (err.name === 'AbortError' || controller.signal.aborted) return;
@@ -813,17 +783,7 @@ window.startInfiniteHand = async function(mode) {
 };
 
 function renderInfiniteHand(sim, topicTitle, mode) {
-  const exEl       = document.getElementById('infinite-hand');
-  const analysis   = sim.analysis || {};
-
-  const streetsSummary = (sim.streets || []).map(st => `
-    <div class="flex gap-2 text-xs leading-relaxed">
-      <span class="font-bold whitespace-nowrap" style="color:#c8a045;">${st.name}:</span>
-      <span class="text-gray-400">${(st.actions || []).join(' → ')}</span>
-    </div>`).join('');
-
-  const narrativeHtml = (sim.narrative || sim.situation || '').split('\n').filter(Boolean)
-    .map(p => `<p>${applyGlossary(p)}</p>`).join('');
+  const exEl = document.getElementById('infinite-hand');
 
   const modeTag  = mode === 'focado' ? '🎯 FOCADO' : '🌐 GERAL';
   const modeStyle = mode === 'focado'
@@ -837,51 +797,7 @@ function renderInfiniteHand(sim, topicTitle, mode) {
       <span class="text-xs font-bold ml-auto px-2 py-0.5 rounded" style="background:rgba(239,68,68,0.15);color:#f87171;">DIFÍCIL</span>
     </div>
 
-    ${renderPokerTable(sim)}
-
-    <div class="rounded-xl p-5 mb-4" style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07);">
-      <h3 class="text-sm font-bold mb-4 flex items-center gap-2" style="color:#c8a045;"><span>📖</span> Como a Mão se Desenvolveu</h3>
-      <div class="text-gray-300 text-sm leading-loose space-y-3">${narrativeHtml}</div>
-      ${streetsSummary ? `
-      <details class="mt-5">
-        <summary class="text-xs cursor-pointer select-none hover:text-gray-300 transition-colors" style="color:#4b5563;">📋 Ver resumo das streets</summary>
-        <div class="mt-3 space-y-2 pl-3" style="border-left:2px solid rgba(255,255,255,0.07);">${streetsSummary}</div>
-      </details>` : ''}
-    </div>
-
-    <div class="rounded-xl p-4 mb-4" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
-      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
-      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
-    </div>
-
-    <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-inf">
-      ${(sim.options || []).map((opt, oi) => `
-        <button onclick="answerInfiniteHand(${oi},${sim.correct})" id="sim-btn-inf-${oi}"
-                class="${actionClass(opt)}" style="font-size:14px; padding:10px 18px;">${opt}</button>`).join('')}
-    </div>
-
-    <div id="sim-feedback-inf" class="hidden mb-3"></div>
-
-    <div id="sim-analysis-inf" class="hidden">
-      <div class="flex gap-1 mb-3 flex-wrap">
-        <button onclick="setAnalysisTabInf('explanation')" id="ana-inf-explanation" class="ana-tab active">📖 Explicação</button>
-        <button onclick="setAnalysisTabInf('ev')"          id="ana-inf-ev"          class="ana-tab">📊 EV</button>
-        <button onclick="setAnalysisTabInf('gto')"         id="ana-inf-gto"         class="ana-tab">⚖️ GTO</button>
-      </div>
-      <div class="rounded-xl p-4 text-sm" style="background:rgba(5,150,105,0.06); border:1px solid rgba(52,211,153,0.15);">
-        <div id="ana-inf-explanation-content" class="text-gray-300 leading-relaxed space-y-2">
-          ${(analysis.explanation || '').split('\n').filter(Boolean).map(p => `<p>${applyGlossary(p)}</p>`).join('')}
-        </div>
-        <div id="ana-inf-ev-content" class="hidden">
-          <p class="text-xs font-bold text-green-400 mb-2">VALOR ESPERADO (EV)</p>
-          <p class="text-gray-300 font-mono text-xs leading-relaxed">${analysis.ev || '—'}</p>
-        </div>
-        <div id="ana-inf-gto-content" class="hidden">
-          <p class="text-xs font-bold text-blue-400 mb-2">FREQUÊNCIAS GTO</p>
-          <p class="text-gray-300 text-sm leading-relaxed">${applyGlossary(analysis.gto || '—')}</p>
-        </div>
-      </div>
-    </div>
+    ${simBodyHtml(sim, 'inf', (oi) => `answerInfiniteHand(${oi},${sim.correct})`)}
 
     <button onclick="startInfiniteHand('${mode}')"
             class="w-full mt-5 py-3 rounded-xl text-sm font-bold transition-all hover:opacity-80"
@@ -895,44 +811,7 @@ function renderInfiniteHand(sim, topicTitle, mode) {
 window.answerInfiniteHand = function(selected, correct) {
   if (infiniteAnswered) return;
   infiniteAnswered = true;
-  const sim = window._infSim || {};
-  const isCorrect = selected === correct;
-
-  (sim.options || []).forEach((_, oi) => {
-    const btn = document.getElementById(`sim-btn-inf-${oi}`);
-    if (!btn) return;
-    btn.disabled = true;
-    if (oi === selected) {
-      if (isCorrect) { btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399'; }
-      else           { btn.style.background = 'rgba(239,68,68,0.3)'; btn.style.borderColor = 'rgba(239,68,68,0.6)'; btn.style.color = '#f87171'; }
-    }
-    if (oi === correct && !isCorrect) {
-      btn.style.background = 'rgba(5,150,105,0.3)'; btn.style.borderColor = 'rgba(52,211,153,0.6)'; btn.style.color = '#34d399';
-    }
-  });
-
-  const correctLabel = (sim.options || [])[correct] || '';
-  const feedbackEl   = document.getElementById('sim-feedback-inf');
-  if (feedbackEl) {
-    feedbackEl.classList.remove('hidden');
-    feedbackEl.innerHTML = isCorrect
-      ? `<div class="rounded-xl p-4 flex items-center gap-3" style="background:rgba(5,150,105,0.2); border:2px solid rgba(52,211,153,0.5);">
-           <span class="text-3xl flex-shrink-0">✅</span>
-           <div><p class="font-bold text-green-400 text-sm">Você acertou!</p><p class="text-xs text-gray-300">Excelente decisão.</p></div>
-         </div>`
-      : `<div class="rounded-xl p-4 flex items-center gap-3" style="background:rgba(239,68,68,0.15); border:2px solid rgba(239,68,68,0.45);">
-           <span class="text-3xl flex-shrink-0">❌</span>
-           <div><p class="font-bold text-red-400 text-sm">Você errou.</p><p class="text-xs text-gray-300">A ação correta era: <strong>${correctLabel}</strong></p></div>
-         </div>`;
-  }
-  document.getElementById('sim-analysis-inf')?.classList.remove('hidden');
-};
-
-window.setAnalysisTabInf = function(tab) {
-  ['explanation','ev','gto'].forEach(t => {
-    document.getElementById(`ana-inf-${t}`)?.classList.toggle('active', t === tab);
-    document.getElementById(`ana-inf-${t}-content`)?.classList.toggle('hidden', t !== tab);
-  });
+  revealSimAnswer(window._infSim || {}, 'inf', selected, correct);
 };
 
 // ── COMPLETE LESSON ───────────────────────────────────────────

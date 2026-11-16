@@ -25,9 +25,9 @@ Plataforma web de coaching de poker com IA para um currículo estruturado de 90 
 
 **Stack:**
 - Frontend: HTML puro + Tailwind CSS (CDN) + Firebase Client SDK (compat v9)
-- Backend: Node.js 20 + Express, servido via Firebase Cloud Functions v2
+- Backend: Node.js 22 + Express, servido via Firebase Cloud Functions v2 (timeout 120s)
 - Banco: Firestore (sem ORM — SDK direto)
-- IA: Anthropic Claude — Haiku 4.5 para geração de lições, Sonnet 4.6 para chat do coach
+- IA: Anthropic Claude — `claude-haiku-5-5` (`output_config.effort: 'low'`) para tudo: lições, chat e treino infinito. Um único `callClaude` em `backend/routes/claude.js`.
 - Hosting: Firebase Hosting → `https://poker-coach-ia.web.app`
 - Secrets: Firebase Secret Manager (`CLAUDE_API_KEY`)
 
@@ -76,6 +76,7 @@ frontend/
 functions/index.js        → entry point da Cloud Function
 firebase.json             → config hosting, functions, Firestore (NÃO TOCAR sem avisar)
 firestore.rules           → regras de segurança (NÃO TOCAR sem avisar)
+.github/workflows/ci.yml  → GitHub Actions CI: npm test em todo push/PR
 ```
 
 ## 4. Funcionalidades críticas (GOLDEN PATHS — não podem regredir)
@@ -171,22 +172,34 @@ Se `npm` não estiver disponível (computador do trabalho), registrar explicitam
 
 ## 12. Estado atual e próximos passos
 
-**Última sessão (maio 2026):**
-- Implementados todos os itens pendentes do README: ESLint, DOMPurify, página de perfil, Custom Claims e suíte de testes Vitest.
-- ESLint: `eslint.config.js` criado (flat config v9), scripts `lint`/`test`/`test:watch` adicionados ao `package.json`, devDeps `eslint globals vitest supertest` declaradas.
-- DOMPurify: XSS fechados no chat do coach (`lesson.js`) e no painel admin (`admin.js` + `admin.html`).
-- Página de perfil: `frontend/pages/profile.html` + `frontend/js/profile.js` (mostra XP, streak, dias, progresso; edita nome e avatar). Guard de auth adicionado em `auth.js`.
-- Custom Claims Firebase Auth: `auth.js` agora lê `role` do token (sem GET no Firestore); fallback + migração gradual para usuários antigos. `users.js` chama `setCustomUserClaims` no registro e na troca de role.
-- Testes Vitest: `backend/utils/extractJson.js` (util extraído de `claude.js`), `backend/utils/extractJson.test.js` (11 testes), `backend/routes/claude.test.js`, `backend/routes/progress.test.js`.
-- Leaderboard: já estava implementado (backend + frontend) — só verificação visual necessária.
+**Última sessão (16 nov 2026 — sessão 4): revisão geral + correção de todos os achados.** Código na branch `feat/implementacao-maio-2026`, **não commitado, não deployado**.
+- **Backend**: streak comparado por dia-calendário em `America/Sao_Paulo` (mesmo dia mantém, ontem +1, senão 1) — `progress.js`; `GET /progress/history?day=N` (1 leitura); `DELETE /users/lessons/cache` só atualiza docs existentes (antes abortava o batch inteiro); validação de `day` inteiro 1-91 + caps de `title`/`description`/`topicTitle`/`context` em `claude.js` (fechava envenenamento do cache global); `callClaude` migrado para `claude-haiku-5-5` com `effort: 'low'`, lê blocos por tipo, trata `stop_reason` `max_tokens`/`refusal`, 1 retry em 429/529, timeout 110s (função 120s); `max_tokens` fase 1 2500 / fase 2 12000 / practice 4500 / chat 1200; erros da IA nunca repassam texto da Anthropic (`sendClaudeError`); system prompt unificado (`buildSystemPrompt`); `app.set('trust proxy', true)` + CSP local liberando `cdnjs` e `onclick` (`scriptSrcAttr`); `firebase.json` → `functions.ignore` exclui `.env*`, `firebase-service-account.json`, `context/`, `docs/`; índice composto não usado removido de `firestore.indexes.json`.
+- **Glossário**: `rio`, `virada`, `chamou`, `chamaram`, `verificar` deixam de ser auto-substituídos (só sinalizados no log — falsos positivos tipo "Rio de Janeiro", "verificar as pot odds"); normalização preserva maiúscula inicial.
+- **Frontend**: `goToStep` não pula mais etapas (golden path #4 estrito); `practice-hand` passa por `sanitizeAiData`; fallback sem DOMPurify escapa HTML; `lesson_visits_X` só incrementa após a fase 2 terminar; dashboard escreve `completedDays`; picker de prazo do admin em data local (não drifta +1 dia); `renderSimLevel`/`renderInfiniteHand` compartilham `simBodyHtml` + `revealSimAnswer`; removidos `renderStreets`, `getToken`, `fbDb`, `window._currentUser`, modal morto do dashboard, `setAnalysisTabInf`.
+- **Testes**: 68 (streak, transação/409, `history?day`, cache clear, validações, robustez do `callClaude`). Lint: 0 erros, 0 warnings.
 
-**Próximos passos possíveis:**
+**Bugs conhecidos:** nenhum aberto da lista de junho (todos corrigidos nesta sessão). A CSP de produção continua inexistente (Hosting não envia; só um build step do Tailwind resolveria) — decisão futura, não bug.
+
+**Sessão maio 2026 — sessão 2:**
+- **CI GitHub Actions**: criado `.github/workflows/ci.yml` — roda `npm test` (Vitest) em todo push e PR, Node 22, `npm ci`.
+
+**Sessão anterior (maio 2026 — sessão 1):**
+- **Painel admin completo**: bloqueio/desbloqueio de usuário (imediato via Firebase Auth), prazo de acesso com date picker (`accessExpiresAt`), reset de senha por email (`sendPasswordResetEmail`), link Firebase Console, badges Ativo/Bloqueado e data de expiração na tabela.
+- **Middleware `requireActiveAccess`**: bloqueia usuários expirados nas rotas de conteúdo (lições, chat, `/progress/complete`, `/progress/history`). Admins sempre passam.
+- **`syncClaims`** em `users.js`: preserva `role` + `accessExpiresAt` nos custom claims ao mudar qualquer um dos dois.
+- **Fix vocabulário**: naipe ♥ = Copas (nunca "corações"); proibidos termos híbridos como "3-bet-happy" nos prompts de geração de lições.
+- Merge PR #2 em `main` (SHA `26db39a`). Deploy realizado em `https://poker-coach-ia.web.app`.
+
+**Próximos passos (em ordem):**
+1. **Revisar o diff e commitar** (inclui `.github/workflows/ci.yml`, ainda untracked) → push da branch para validar o CI.
+2. **Deploy**: `npx firebase deploy --only functions,hosting,firestore` (leva o timeout 120s, o `functions.ignore` novo e a remoção do índice — o CLI pergunta antes de apagar o índice).
+3. Pós-deploy: `DELETE /api/users/lessons/cache` uma vez; abrir 2-3 lições e conferir (a) fase 2 ≤ ~45s com Haiku 5.5 — se passar disso, subir `effort` não ajuda, reduzir `max_tokens` da fase 2 ou dividir o prompt; (b) narrativas sem "fracasso/grande cego"; (c) `[pokerLanguage]` no log para ver se `rio`/`virada`/`verificar` aparecem com frequência (se sim, voltar a auto-substituir só esses).
+4. **Não verificado nesta sessão**: se o rewrite do Firebase Hosting respeita respostas >60s da função; se bundles anteriores da função continham `.env`/service account (agora ignorados — considerar rotacionar a chave da service account por precaução).
 - Domínio customizado (configuração manual no Firebase Console, não é código).
-- GitHub Actions para rodar `npm test` automaticamente no push (CI).
-- Possíveis melhorias futuras: Firestore emulator para testes de integração, página de perfil com foto do Google, leaderboard com posição própria além do top 10.
+- Melhorias futuras: build step do Tailwind (CSP real em produção, sem FOUC), Firestore emulator para testes de integração, foto do Google no perfil, leaderboard com posição própria além do top 10.
 
 **Decisões importantes:**
-- Cache em dois níveis: localStorage (por usuário/sessão) + Firestore `lessons/day_X` (global). 2ª visita do mesmo usuário sempre gera conteúdo novo via IA (`forceNew: true`).
+- Cache em dois níveis: localStorage (`lesson_v8_X`) + Firestore `lessons/day_X` (global). Na lição, 1ª visita busca Firestore ou gera via IA; 2ª visita do mesmo navegador sempre gera conteúdo novo (`forceNew: true`). O cache localStorage é **escrito** pela lição mas só **lido** por `flashcards.js` (deck de revisão) — na lição ele nunca é alcançado.
+- Two-phase: fase 1 usa `max_tokens:2500` (~10s), fase 2 usa `max_tokens:12000` (~40s, Haiku 5.5). `callClaude` lança erro se `stop_reason === 'max_tokens'` em respostas JSON. Firestore usa `set({...},{merge:true})` — docs antigos continuam compatíveis sem invalidar cache.
 - Progressão é linear e bloqueada — não é possível pular etapas. Feynman é sempre o primeiro passo desbloqueado após a teoria.
-- Modelo para lições: Claude Haiku 4.5 com `max_tokens: 8000` (equilíbrio custo/qualidade).
 - Extração de JSON robusta no backend: tenta parse direto → markdown fence → primeiro/último `{ }`.

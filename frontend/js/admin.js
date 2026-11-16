@@ -11,7 +11,6 @@ import { fbAuth } from './config.js';
 import { userApi } from './api.js';
 
 let pendingDeleteUid  = null; // UID aguardando confirmação de deleção
-let pendingDeleteName = null;
 let pendingAccessUid  = null; // UID aguardando definição de prazo
 let allUsers          = []; // cache para lookups por uid nos handlers de onclick
 
@@ -30,6 +29,8 @@ fbAuth.onAuthStateChanged(async (user) => {
     document.getElementById('admin-panel').classList.remove('hidden');
     await loadUsers();
   } catch (err) {
+    // Pode ser erro de rede, não só falta de permissão — deixa rastro no console
+    console.error('Erro ao carregar painel admin:', err.message);
     document.getElementById('access-denied').classList.remove('hidden');
   }
 });
@@ -147,7 +148,6 @@ window.toggleRole = async function(uid) {
 window.openDeleteModal = function(uid) {
   const name        = allUsers.find(u => u.uid === uid)?.name || uid;
   pendingDeleteUid  = uid;
-  pendingDeleteName = name;
   document.getElementById('delete-name').textContent = name;
   const modal = document.getElementById('modal-delete');
   modal.classList.remove('hidden');
@@ -156,7 +156,6 @@ window.openDeleteModal = function(uid) {
 
 window.closeDeleteModal = function() {
   pendingDeleteUid  = null;
-  pendingDeleteName = null;
   const modal = document.getElementById('modal-delete');
   modal.classList.add('hidden');
   modal.classList.remove('flex');
@@ -198,11 +197,17 @@ window.openAccessModal = function(uid) {
   pendingAccessUid = uid;
   document.getElementById('access-name').textContent = user?.name || uid;
 
-  // Preenche a data atual do prazo se existir
+  // Preenche a data atual do prazo se existir.
+  // Formata no fuso local: toISOString() converteria 23:59:59 BRT para o dia
+  // seguinte em UTC e cada re-salvamento empurraria o prazo +1 dia.
   const input = document.getElementById('access-date');
-  input.value = user?.accessExpiresAt
-    ? new Date(user.accessExpiresAt).toISOString().split('T')[0]
-    : '';
+  if (user?.accessExpiresAt) {
+    const d = new Date(user.accessExpiresAt);
+    const pad = (n) => String(n).padStart(2, '0');
+    input.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  } else {
+    input.value = '';
+  }
 
   const modal = document.getElementById('modal-access');
   modal.classList.remove('hidden');

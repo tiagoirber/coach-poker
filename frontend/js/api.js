@@ -91,8 +91,8 @@ export const progressApi = {
     body:   JSON.stringify({ day, category, title }),
   }),
 
-  // Histórico de lições concluídas
-  getHistory: () => apiFetch('/progress/history'),
+  // Histórico de lições concluídas. Com `day`, retorna só esse dia (1 leitura).
+  getHistory: (day) => apiFetch(day ? `/progress/history?day=${day}` : '/progress/history'),
 
   // Ranking global
   getLeaderboard: () => apiFetch('/progress/leaderboard'),

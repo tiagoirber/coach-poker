@@ -7,6 +7,30 @@
 import { fbAuth, CURRICULUM, CATEGORY_COLORS, XP_BY_CATEGORY, LESSON_CACHE_VER } from './config.js';
 import { claudeApi, progressApi } from './api.js';
 import { applyGlossary } from './glossary.js';
+import { canReplay, mountReplay } from './handReplay.js';
+
+// Players de replay montados, por sufixo ('easy'|'medium'|'hard'|'inf').
+// Um painel pode ser re-renderizado (cache local → exercícios novos); o player
+// antigo precisa ser destruído para o timer dele parar.
+const activeReplays = {};
+
+function stopReplay(suffix) {
+  activeReplays[suffix]?.destroy();
+  delete activeReplays[suffix];
+}
+
+function startReplay(sim, suffix) {
+  stopReplay(suffix);
+  const box = document.getElementById(`replay-${suffix}`);
+  if (!box) return;
+  activeReplays[suffix] = mountReplay(box, sim, {
+    // Opções só aparecem na decisão; depois disso continuam visíveis
+    onDecision: () => {
+      document.getElementById(`sim-actions-${suffix}`)?.classList.remove('hidden');
+      document.getElementById(`sim-q-${suffix}`)?.classList.remove('hidden');
+    },
+  });
+}
 
 // Fallback quando o CDN do DOMPurify não carrega: escapa em vez de devolver cru.
 const escapeHtml = (s) => s.replace(/[&<>"']/g, c => (
@@ -264,6 +288,7 @@ async function loadExercises(day, title, description, category, forceNew, cacheK
     localStorage.setItem(cacheKey, JSON.stringify(lessonData));
   } catch (err) {
     console.error('Erro ao gerar exercícios:', err.message);
+    ['easy', 'medium', 'hard'].forEach(stopReplay);
     const errHtml = `
       <div class="text-center py-6">
         <p class="text-red-400 text-sm mb-3">⚠️ Erro ao gerar exercícios</p>
@@ -281,6 +306,7 @@ async function loadExercises(day, title, description, category, forceNew, cacheK
 }
 
 window.loadExercisesRetry = function() {
+  ['easy', 'medium', 'hard'].forEach(stopReplay);
   const { day, title, description, category } = currentTopic;
   const visitKey   = `lesson_visits_${day}`;
   const visitCount = parseInt(localStorage.getItem(visitKey) || '0', 10);
@@ -430,7 +456,13 @@ function simBodyHtml(sim, suffix, answerCall) {
   const narrativeHtml = (sim.narrative || sim.situation || '').split('\n').filter(Boolean)
     .map(p => `<p>${applyGlossary(p)}</p>`).join('');
 
-  return `
+  const hasReplay = canReplay(sim);
+  const topHtml = hasReplay ? `
+    <div id="replay-${suffix}" class="mb-4"></div>
+    <div id="sim-q-${suffix}" class="hidden rounded-xl p-4 mb-3" style="background:rgba(200,160,69,0.07); border:1px solid rgba(200,160,69,0.25);">
+      <p class="text-xs font-bold uppercase tracking-widest mb-2" style="color:#c8a045;">Sua Decisão</p>
+      <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
+    </div>` : `
     <!-- ══ LAYOUT: MESA + NARRATIVA PARALELOS ══ -->
     <div style="display:flex; gap:16px; align-items:flex-start; margin-bottom:16px;">
       <div style="flex:0 0 auto;">
@@ -456,10 +488,13 @@ function simBodyHtml(sim, suffix, answerCall) {
           <p class="text-white font-semibold text-sm leading-relaxed">👉 ${sim.question || 'Qual é sua ação?'}</p>
         </div>
       </div>
-    </div>
+    </div>`;
 
-    <!-- ══ OPÇÕES ══ -->
-    <div class="flex flex-wrap gap-2 mb-4" id="sim-actions-${suffix}">
+  return `
+    ${topHtml}
+
+    <!-- ══ OPÇÕES (ocultas até a decisão quando há replay) ══ -->
+    <div class="flex flex-wrap gap-2 mb-4 ${hasReplay ? 'hidden' : ''}" id="sim-actions-${suffix}">
       ${(sim.options || []).map((opt, oi) => `
         <button onclick="${answerCall(oi)}"
                 id="sim-btn-${suffix}-${oi}"
@@ -541,8 +576,10 @@ function revealSimAnswer(sim, suffix, selected, correct) {
 function renderSimLevel(level) {
   const sim       = lessonData.handSimulations?.[level];
   const container = document.getElementById(`sim-${level}`);
-  if (!sim) { container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
+  if (!sim) { stopReplay(level); container.innerHTML = '<p class="text-gray-500 text-sm text-center py-4">Simulação não disponível.</p>'; return; }
   container.innerHTML = simBodyHtml(sim, level, (oi) => `answerSim('${level}',${oi},${sim.correct})`);
+  if (canReplay(sim)) startReplay(sim, level);
+  else stopReplay(level);
 }
 
 window.answerSim = function(level, selected, correct) {
@@ -744,6 +781,7 @@ window.startInfiniteHand = async function(mode) {
   document.getElementById('btn-mode-geral')?.classList.remove('active-focado', 'active-geral');
   document.getElementById(`btn-mode-${mode}`)?.classList.add(`active-${mode}`);
 
+  stopReplay('inf');
   const exEl = document.getElementById('infinite-hand');
   exEl.classList.remove('hidden');
   exEl.innerHTML = '<p class="text-gray-500 animate-pulse text-sm py-6 text-center">⏳ Gerando uma nova mão difícil...</p>';
@@ -806,6 +844,7 @@ function renderInfiniteHand(sim, topicTitle, mode) {
     </button>`;
 
   window._infSim = sim;
+  if (canReplay(sim)) startReplay(sim, 'inf');
 }
 
 window.answerInfiniteHand = function(selected, correct) {

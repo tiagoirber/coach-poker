@@ -56,18 +56,24 @@ backend/
   config/firebase.js      → Firebase Admin SDK
   middleware/auth.js      → verificação de token Firebase (NÃO TOCAR)
   routes/
-    claude.js             → POST /api/claude/lesson e /api/claude/chat
-    progress.js           → complete, history, leaderboard
+    claude.js             → /api/claude/lesson, /lesson-exercises, /chat, /practice-hand
+    progress.js           → complete, history (?day=N), leaderboard
+  utils/
+    replay.js             → validateReplay + applyReplay (roteiro do replay animado)
+    pokerLanguage.js      → normalização/validação de linguagem poker BR
+    extractJson.js        → parse robusto do JSON da IA
     users.js              → CRUD de usuários e roles
 frontend/
   index.html              → página de login/auth
   404.html                → redirect automático para /
   css/glass.css           → estilos customizados (glassmorphism)
+  css/replay.css          → visual da mesa animada (prefixo rp-)
   js/
     config.js             → Firebase init + CURRICULUM (90 dias) + CATEGORY_COLORS
     api.js                → wrapper fetch (userApi, progressApi, claudeApi)
     auth.js               → guard de autenticação
     lesson.js             → lógica completa da lição (quiz, sim, Feynman, stepper)
+    handReplay.js         → player do replay animado 6-max (canReplay, stateAt, mountReplay)
     dashboard.js          → currículo, progresso, XP, streak
     flashcards.js         → revisão de flashcards
     glossary.js           → tooltips de termos de poker
@@ -172,7 +178,12 @@ Se `npm` não estiver disponível (computador do trabalho), registrar explicitam
 
 ## 12. Estado atual e próximos passos
 
-**Última sessão (16 nov 2026 — sessão 4): revisão geral + correção de todos os achados.** Código na branch `feat/implementacao-maio-2026`, **não commitado, não deployado**.
+**Última sessão (16–17 nov 2026 — sessão 4): revisão geral + correções + replay animado.** Tudo em `main` e **deployado** (functions + hosting + firestore indexes).
+- PR #3 (`20afcda`): correção dos 10 bugs de junho + 16 achados novos (detalhes abaixo). Cache de exercícios limpo uma vez em produção. Conta `tiagoirber@gmail.com` promovida a admin (Firestore + custom claim; nenhuma tela cria o primeiro admin).
+- PR #4 (`99b0f6a`): replay animado da mão nas simulações e no Treino Infinito (ver "Decisões importantes"). Spec e plano em `docs/superpowers/`. Player validado no Chrome com dados de exemplo (desktop e 390px); **geração real pela IA ainda não validada em produção**.
+- Fluxo de feature adotado: brainstorming (com mockups no navegador) → spec → plano → execução por subagentes com revisão de spec + qualidade por tarefa.
+
+**Detalhes do PR #3:**
 - **Backend**: streak comparado por dia-calendário em `America/Sao_Paulo` (mesmo dia mantém, ontem +1, senão 1) — `progress.js`; `GET /progress/history?day=N` (1 leitura); `DELETE /users/lessons/cache` só atualiza docs existentes (antes abortava o batch inteiro); validação de `day` inteiro 1-91 + caps de `title`/`description`/`topicTitle`/`context` em `claude.js` (fechava envenenamento do cache global); `callClaude` migrado para `claude-haiku-5-5` com `effort: 'low'`, lê blocos por tipo, trata `stop_reason` `max_tokens`/`refusal`, 1 retry em 429/529, timeout 110s (função 120s); `max_tokens` fase 1 2500 / fase 2 12000 / practice 4500 / chat 1200; erros da IA nunca repassam texto da Anthropic (`sendClaudeError`); system prompt unificado (`buildSystemPrompt`); `app.set('trust proxy', true)` + CSP local liberando `cdnjs` e `onclick` (`scriptSrcAttr`); `firebase.json` → `functions.ignore` exclui `.env*`, `firebase-service-account.json`, `context/`, `docs/`; índice composto não usado removido de `firestore.indexes.json`.
 - **Glossário**: `rio`, `virada`, `chamou`, `chamaram`, `verificar` deixam de ser auto-substituídos (só sinalizados no log — falsos positivos tipo "Rio de Janeiro", "verificar as pot odds"); normalização preserva maiúscula inicial.
 - **Frontend**: `goToStep` não pula mais etapas (golden path #4 estrito); `practice-hand` passa por `sanitizeAiData`; fallback sem DOMPurify escapa HTML; `lesson_visits_X` só incrementa após a fase 2 terminar; dashboard escreve `completedDays`; picker de prazo do admin em data local (não drifta +1 dia); `renderSimLevel`/`renderInfiniteHand` compartilham `simBodyHtml` + `revealSimAnswer`; removidos `renderStreets`, `getToken`, `fbDb`, `window._currentUser`, modal morto do dashboard, `setAnalysisTabInf`.
@@ -191,16 +202,17 @@ Se `npm` não estiver disponível (computador do trabalho), registrar explicitam
 - Merge PR #2 em `main` (SHA `26db39a`). Deploy realizado em `https://poker-coach-ia.web.app`.
 
 **Próximos passos (em ordem):**
-1. **Revisar o diff e commitar** (inclui `.github/workflows/ci.yml`, ainda untracked) → push da branch para validar o CI.
-2. **Deploy**: `npx firebase deploy --only functions,hosting,firestore` (leva o timeout 120s, o `functions.ignore` novo e a remoção do índice — o CLI pergunta antes de apagar o índice).
-3. Pós-deploy: `DELETE /api/users/lessons/cache` uma vez; abrir 2-3 lições e conferir (a) fase 2 ≤ ~45s com Haiku 5.5 — se passar disso, subir `effort` não ajuda, reduzir `max_tokens` da fase 2 ou dividir o prompt; (b) narrativas sem "fracasso/grande cego"; (c) `[pokerLanguage]` no log para ver se `rio`/`virada`/`verificar` aparecem com frequência (se sim, voltar a auto-substituir só esses).
-4. **Não verificado nesta sessão**: se o rewrite do Firebase Hosting respeita respostas >60s da função; se bundles anteriores da função continham `.env`/service account (agora ignorados — considerar rotacionar a chave da service account por precaução).
+1. **Validar o replay com a IA real em produção**: abrir 2-3 lições (1ª visita regenera exercícios, até ~60s), ver o replay tocar e parar na decisão; `npx firebase functions:log --only api` → contar `[replay] inválido`. Se frequente, ajustar `REPLAY_RULES`/exemplos em `claude.js` ou subir `effort` só na fase 2.
+2. Conferir no mesmo log: tempo da fase 2 (meta ≤ 60s; função tem 120s), `[pokerLanguage]` (se `rio`/`virada`/`verificar` aparecerem muito, voltar a auto-substituir só esses), narrativas sem "fracasso/grande cego".
+3. Validar no browser os golden paths após as mudanças: concluir 2 lições no mesmo dia (streak não cai), stepper sem pulo, prazo no admin sem +1 dia.
+4. **Não verificado**: se o rewrite do Firebase Hosting respeita respostas >60s da função; se bundles antigos da função continham `.env`/service account (agora ignorados — considerar rotacionar a chave da service account).
+5. Limpeza: apagar branches já mescladas (`feat/hand-replay`, `fix/revisao-nov-2026`, `feat/implementacao-maio-2026`).
 - Domínio customizado (configuração manual no Firebase Console, não é código).
 - Melhorias futuras: build step do Tailwind (CSP real em produção, sem FOUC), Firestore emulator para testes de integração, foto do Google no perfil, leaderboard com posição própria além do top 10.
 
 **Decisões importantes:**
 - Cache em dois níveis: localStorage (`lesson_v8_X`) + Firestore `lessons/day_X` (global). Na lição, 1ª visita busca Firestore ou gera via IA; 2ª visita do mesmo navegador sempre gera conteúdo novo (`forceNew: true`). O cache localStorage é **escrito** pela lição mas só **lido** por `flashcards.js` (deck de revisão) — na lição ele nunca é alcançado.
-- Two-phase: fase 1 usa `max_tokens:2500` (~10s), fase 2 usa `max_tokens:12000` (~40s, Haiku 5.5). `callClaude` lança erro se `stop_reason === 'max_tokens'` em respostas JSON. Firestore usa `set({...},{merge:true})` — docs antigos continuam compatíveis sem invalidar cache.
+- Two-phase: fase 1 usa `max_tokens:2500` (~10s), fase 2 usa `max_tokens:16000` (exercícios + roteiro do replay, Haiku 5.5); practice-hand 6000. `callClaude` lança erro se `stop_reason === 'max_tokens'` em respostas JSON. Firestore usa `set({...},{merge:true})` — docs antigos continuam compatíveis sem invalidar cache.
 - Replay animado das simulações (spec `docs/superpowers/specs/2026-11-17-hand-replay-design.md`): cada simulação traz `table.seats` (6-max) + `replay[]` (lance a lance com `narration`), validados em `backend/utils/replay.js`. Replay inválido → simulação sai sem animação e a fase 2 NÃO é cacheada. Cache de exercícios só vale se `handSimulations.easy.replay` existir. Frontend: `frontend/js/handReplay.js` + `frontend/css/replay.css`; sem replay, mesa estática antiga. O player só toca quando aparece na tela e as opções ficam ocultas até a decisão.
 - Progressão é linear e bloqueada — não é possível pular etapas. Feynman é sempre o primeiro passo desbloqueado após a teoria.
 - Extração de JSON robusta no backend: tenta parse direto → markdown fence → primeiro/último `{ }`.

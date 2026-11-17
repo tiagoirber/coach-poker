@@ -24,6 +24,7 @@ import {
 import rateLimit from 'express-rate-limit';
 import { db } from '../config/firebase.js';
 import { extractJson } from '../utils/extractJson.js';
+import { applyReplay } from '../utils/replay.js';
 
 const router = Router();
 
@@ -167,6 +168,17 @@ Crie conteúdo didático rico em português brasileiro, com linguagem clara para
 ${POKER_TERMS_RULES}${withNarrativeRules ? '\n' + POKER_BR_NARRATIVE_PROMPT : ''}`;
 }
 
+// Regras do roteiro lance a lance (replay animado). Compartilhadas pela fase 2
+// e pelo practice-hand. Estrutura validada em utils/replay.js.
+const REPLAY_RULES = `REPLAY — OBRIGATÓRIO em cada simulação: roteiro lance a lance usado para animar a mão na tela.
+- "table.seats": EXATAMENTE 6 assentos com "pos" em UTG, HJ, CO, BTN, SB, BB (cada uma uma vez), "stack" NUMÉRICO em bb ANTES dos blinds, e "hero": true em exatamente um assento (a posição do Hero).
+- "replay": 6 a 20 passos em ordem cronológica. Cada passo: {"street":"preflop|flop|turn|river","board":"cartas do board até este lance","actor":"posição ou null","action":"...","amount":número,"pot":número,"narration":"1-3 frases"}.
+- "action": post (blinds: SEMPRE os 2 primeiros passos, SB depois BB), fold, check, call, bet, raise, allin, deal (revela flop/turn/river; actor null), decision (SEMPRE o ÚLTIMO passo; actor = posição do Hero).
+- "amount": TOTAL que o ator colocou NA STREET atual (raise para 2.5bb → 2.5; call de 2.5bb → 2.5). Use 0 em fold, check, deal e decision. "pot": pote APÓS o lance. Números sem "bb".
+- Inclua TODOS os jogadores que agem: cada fold pré-flop é um passo.
+- "narration" de cada passo é o trecho da narração daquele lance, no tom de comentarista; juntas, contam a mesma mão de "narrative". NÃO revele a resposta correta.
+- Pote, apostas e stacks devem fechar matematicamente.`;
+
 // Conteúdo de exemplo usado como fallback quando a API está indisponível
 function getFallbackLesson(day, title, description, category, isCashGame = false) {
   const ctx = isCashGame
@@ -196,7 +208,7 @@ function getFallbackLesson(day, title, description, category, isCashGame = false
       easy: {
         heroHand: 'A♠K♦', position: 'BTN', villainPosition: 'BB', board: 'A♥7♣2♦', pot: '12bb', stack: '100bb',
         streets: [
-          { name: 'Pré-Flop', actions: ['UTG: Fold', 'MP: Fold', 'CO: Fold', 'BTN (Você): Raise 2.5bb', 'SB: Fold', 'BB: Call'] },
+          { name: 'Pré-Flop', actions: ['UTG: Fold', 'HJ: Fold', 'CO: Fold', 'BTN (Você): Raise 2.5bb', 'SB: Fold', 'BB: Call'] },
           { name: 'Flop (A♥7♣2♦)', actions: ['BB: Check', 'BTN: ?'] },
         ],
         narrative: `${ctx.easy} Você está no BTN com A♠K♦ — uma das mãos premium do poker. A ação passa para você após todos foldarem, e você faz um raise padrão de 2.5bb. Apenas o BB decide defender, e os dois chegam ao flop com ~5bb de pote cada.\n\nO flop vem A♥7♣2♦ — um board extremamente seco e favorável para o seu range. Você flopeou top pair top kicker (TPTK), a combinação mais forte possível com seu A♠K♦. O BB checa sem hesitar.\n\nDo ponto de vista de range, você como BTN tem uma vantagem enorme neste board: seu range de raise pré-flop inclui muitos Ax, enquanto o range de defesa do BB é mais disperso. O board seco (rainbow, sem draws) significa que há poucas cartas de turn que podem assustá-lo.\n\nO BB checou, o que é esperado — ele pode ter pares médios (77, 55), Ax fraco (A4, A5), ou mãos completamente sem showdown value. O pote agora tem 12bb e você está em posição. Esta é exatamente a situação em que ${title} se aplica diretamente à sua decisão de bet sizing.\n\nA pergunta que define um jogador técnico: dado que você tem a melhor mão com alta probabilidade, como extrair o máximo valor sem assustar o oponente? Qual é a sua ação?`,
@@ -213,7 +225,7 @@ function getFallbackLesson(day, title, description, category, isCashGame = false
       medium: {
         heroHand: 'J♠T♠', position: 'CO', villainPosition: 'BB', board: '9♥8♦3♣', pot: '22bb', stack: '85bb',
         streets: [
-          { name: 'Pré-Flop', actions: ['UTG: Fold', 'MP: Fold', 'CO (Você): Raise 2.5bb', 'BTN: Fold', 'SB: Fold', 'BB: Call'] },
+          { name: 'Pré-Flop', actions: ['UTG: Fold', 'HJ: Fold', 'CO (Você): Raise 2.5bb', 'BTN: Fold', 'SB: Fold', 'BB: Call'] },
           { name: 'Flop (9♥8♦3♣)', actions: ['BB: Check', 'CO: ?'] },
         ],
         narrative: `${ctx.medium} Você está no CO com J♠T♠ — uma mão conectada suited com boa equidade em muitos boards. Você abre para 2.5bb e recebe um call do BB, um jogador que defende amplamente sua posição.\n\nO flop vem 9♥8♦3♣ — um board coordenado que hit seu J♠T♠ de forma poderosa: você tem um open-ended straight draw (OESD), com qualquer 7 ou Q completando a nut straight. São 8 outs, aproximadamente 32% de equity no flop contra uma mão como top pair.\n\nO BB checa. Este check pode significar muitas coisas: ele pode ter uma mão média (55, 66), estar slowplaying um set de 99 ou 88, ter uma mão Ax sem conexão com o board, ou simplesmente estar dando espaço para ver o que você faz — o típico check-call ou check-fold.\n\nDo ponto de vista de ${title}, esta situação é rica em nuances. Você tem equity real com o OESD, mas também pode ganhar o pote imediatamente se o BB foldar. A decisão de bet ou check vai definir a linha de jogo para o turn e river.\n\nCom 22bb no pote e o BB aparentemente fraco, como você joga sua mão semi-forte no flop?`,
@@ -230,7 +242,7 @@ function getFallbackLesson(day, title, description, category, isCashGame = false
       hard: {
         heroHand: 'K♠Q♦', position: 'BB', villainPosition: 'BTN', board: 'K♥J♣4♦2♠', pot: '45bb', stack: '70bb',
         streets: [
-          { name: 'Pré-Flop', actions: ['UTG: Fold', 'MP: Fold', 'CO: Fold', 'BTN: Raise 3bb', 'SB: Fold', 'BB (Você): Call'] },
+          { name: 'Pré-Flop', actions: ['UTG: Fold', 'HJ: Fold', 'CO: Fold', 'BTN: Raise 3bb', 'SB: Fold', 'BB (Você): Call'] },
           { name: 'Flop (K♥J♣4♦)', actions: ['BB: Check', 'BTN: Bet 12bb', 'BB: Call'] },
           { name: 'Turn (2♠)', actions: ['BB: Check', 'BTN: Bet 38bb (overbet)', 'BB: ?'] },
         ],
@@ -344,7 +356,8 @@ router.post('/lesson-exercises', verifyToken, requireActiveAccess, claudeLimiter
       const doc = await db.collection('lessons').doc(`day_${day}`).get();
       if (doc.exists) {
         const data = doc.data();
-        if (data?.handSimulations?.easy?.narrative) {
+        // Sem replay = gerado antes do replay animado → regenera uma vez
+        if (data?.handSimulations?.easy?.narrative && data?.handSimulations?.easy?.replay) {
           return res.json({
             exercises: { quiz: data.quiz, handSimulations: data.handSimulations, infiniteTraining: data.infiniteTraining },
             cached: true,
@@ -374,6 +387,7 @@ ${contextRule}
 2. O quiz tem EXATAMENTE 1 pergunta por nível (array com 1 elemento).
 3. "narrative" de cada simulação: 4-5 parágrafos de NARRAÇÃO ENVOLVENTE descrevendo como a mão se desenvolveu street por street — contexto do jogo, raciocínio dos jogadores, leituras de range, dinâmica da mesa. Linguagem de comentarista de poker ao vivo. NÃO revele a resposta correta. Termine no momento exato de decisão.
 4. As "options" das simulações DEVEM ser ações REAIS e VÁLIDAS na situação descrita. NUNCA inclua uma ação impossível (ex: "Check" quando Hero já apostou, "Call" quando não há aposta, "Bet" quando há aposta adversária). Se uma ação não for possível naquele momento, substitua por outra ação válida e distinta.
+5. ${REPLAY_RULES}
 
 Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 {
@@ -390,9 +404,23 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
   },
   "handSimulations": {
     "easy": {
-      "heroHand":"A♠K♦","position":"BTN","villainPosition":"BB","board":"A♥7♣2♦","pot":"12bb","stack":"100bb",
+      "heroHand":"A♠K♦","position":"BTN","villainPosition":"BB","board":"A♥7♣2♦","pot":"5.5bb","stack":"97.5bb",
+      "table":{"seats":[{"pos":"UTG","stack":98},{"pos":"HJ","stack":120},{"pos":"CO","stack":75},{"pos":"BTN","stack":100,"hero":true},{"pos":"SB","stack":60},{"pos":"BB","stack":91}]},
+      "replay":[
+        {"street":"preflop","board":"","actor":"SB","action":"post","amount":0.5,"pot":0.5,"narration":"Mid-stage do torneio. SB posta 0.5bb."},
+        {"street":"preflop","board":"","actor":"BB","action":"post","amount":1,"pot":1.5,"narration":"BB posta 1bb. Você recebe A♠K♦ no BTN."},
+        {"street":"preflop","board":"","actor":"UTG","action":"fold","amount":0,"pot":1.5,"narration":"UTG desiste rápido."},
+        {"street":"preflop","board":"","actor":"HJ","action":"fold","amount":0,"pot":1.5,"narration":"HJ também folda."},
+        {"street":"preflop","board":"","actor":"CO","action":"fold","amount":0,"pot":1.5,"narration":"CO folda; a ação chega no seu botão."},
+        {"street":"preflop","board":"","actor":"BTN","action":"raise","amount":2.5,"pot":4,"narration":"Você faz o raise padrão de 2.5bb."},
+        {"street":"preflop","board":"","actor":"SB","action":"fold","amount":0,"pot":4,"narration":"SB folda."},
+        {"street":"preflop","board":"","actor":"BB","action":"call","amount":2.5,"pot":5.5,"narration":"BB, que defende amplo, paga."},
+        {"street":"flop","board":"A♥7♣2♦","actor":null,"action":"deal","amount":0,"pot":5.5,"narration":"Flop A♥7♣2♦: board seco, rainbow."},
+        {"street":"flop","board":"A♥7♣2♦","actor":"BB","action":"check","amount":0,"pot":5.5,"narration":"BB dá check sem hesitar."},
+        {"street":"flop","board":"A♥7♣2♦","actor":"BTN","action":"decision","amount":0,"pot":5.5,"narration":"Você tem posição e top pair top kicker. Como extrair valor?"}
+      ],
       "streets":[
-        {"name":"Pré-Flop","actions":["UTG: Fold","MP: Fold","CO: Fold","BTN (Você): Raise 2.5bb","SB: Fold","BB: Call"]},
+        {"name":"Pré-Flop","actions":["UTG: Fold","HJ: Fold","CO: Fold","BTN (Você): Raise 2.5bb","SB: Fold","BB: Call"]},
         {"name":"Flop (A♥7♣2♦)","actions":["BB: Check","BTN: ?"]}
       ],
       "narrative":"4-5 parágrafos de narração detalhada sobre como esta mão se desenvolveu — contexto, cada street, raciocínios, leituras, chegando ao momento de decisão sem revelar a resposta",
@@ -408,8 +436,10 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
     },
     "medium": {
       "heroHand":"J♠T♠","position":"CO","villainPosition":"BB","board":"9♥8♦3♣","pot":"22bb","stack":"85bb",
+      "table":{"seats":["6 assentos no MESMO formato do exemplo easy; hero = CO"]},
+      "replay":["passos no MESMO formato do exemplo easy, de post do SB até decision do CO"],
       "streets":[
-        {"name":"Pré-Flop","actions":["UTG: Fold","MP: Fold","CO (Você): Raise 2.5bb","BTN: Fold","SB: Fold","BB: Call"]},
+        {"name":"Pré-Flop","actions":["UTG: Fold","HJ: Fold","CO (Você): Raise 2.5bb","BTN: Fold","SB: Fold","BB: Call"]},
         {"name":"Flop (9♥8♦3♣)","actions":["BB: Check","CO: ?"]}
       ],
       "narrative":"4-5 parágrafos de narração detalhada sobre esta mão intermediária — contexto, dinâmica, ranges dos jogadores, chegando ao ponto de decisão",
@@ -425,8 +455,10 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
     },
     "hard": {
       "heroHand":"K♠Q♦","position":"BB","villainPosition":"BTN","board":"K♥J♣4♦2♠","pot":"45bb","stack":"70bb",
+      "table":{"seats":["6 assentos no MESMO formato do exemplo easy; hero = BB"]},
+      "replay":["passos no MESMO formato do exemplo easy, de post do SB até decision do BB no turn"],
       "streets":[
-        {"name":"Pré-Flop","actions":["UTG: Fold","MP: Fold","CO: Fold","BTN: Raise 3bb","SB: Fold","BB (Você): Call"]},
+        {"name":"Pré-Flop","actions":["UTG: Fold","HJ: Fold","CO: Fold","BTN: Raise 3bb","SB: Fold","BB (Você): Call"]},
         {"name":"Flop (K♥J♣4♦)","actions":["BB: Check","BTN: Bet 12bb","BB: Call"]},
         {"name":"Turn (2♠)","actions":["BB: Check","BTN: Bet 38bb (overbet)","BB: ?"]}
       ],
@@ -450,16 +482,21 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
 }`;
 
   try {
-    // 6500 truncava JSON com Haiku 4.5; o tokenizer do 5.5 conta ~30% a mais.
-    const text = await callClaude(system, prompt, 12000);
+    // 6500 truncava JSON com Haiku 4.5; tokenizer do 5.5 conta ~30% a mais;
+    // o replay lance a lance soma ~30-40% de saída.
+    const text = await callClaude(system, prompt, 16000);
     console.log('Resposta IA fase 2 (primeiros 200 chars):', text.slice(0, 200));
 
     const exercises = extractJson(text);
     if (!exercises) throw new Error('JSON');
 
-    // ── Pipeline de linguagem poker brasileiro ────────────────────────────
+    // ── Replay + pipeline de linguagem poker brasileiro ───────────────────
+    // allReplaysOk=false → a lição é entregue (sem animação onde faltou) mas
+    // NÃO vai para o cache global, para a próxima visita tentar de novo.
+    let allReplaysOk = true;
     for (const level of ['easy', 'medium', 'hard']) {
       const sim = exercises.handSimulations?.[level];
+      if (!applyReplay(sim, `lesson-exercises day=${day} ${level}`)) allReplaysOk = false;
       if (!sim?.narrative) continue;
 
       sim.narrative = normalizePokerLanguage(sim.narrative);
@@ -481,7 +518,10 @@ Retorne APENAS este JSON válido (sem markdown, sem texto extra):
       }
     }
 
-    if (!forceNew) {
+    if (!forceNew && !allReplaysOk) {
+      console.warn(`[replay] exercícios de day=${day} não cacheados (replay inválido em alguma simulação)`);
+    }
+    if (!forceNew && allReplaysOk) {
       try {
         await db.collection('lessons').doc(`day_${day}`).set(
           { quiz: exercises.quiz, handSimulations: exercises.handSimulations, infiniteTraining: exercises.infiniteTraining },
@@ -577,19 +617,39 @@ ${contextRule}
 4. A pergunta deve exigir range thinking, MDF, blockers ou cálculo avançado — nível DIFÍCIL.
 5. Varie posições, mãos e boards a cada chamada para gerar mãos sempre diferentes.
 6. As "options" DEVEM ser ações REAIS e VÁLIDAS na situação descrita. NUNCA inclua ação impossível (ex: "Check" quando Hero já apostou, "Call" quando não há aposta, "Bet" quando há aposta adversária). Se uma ação não for possível naquele momento, substitua por outra ação válida e distinta.
+7. ${REPLAY_RULES}
 
 Retorne APENAS este JSON válido (sem markdown):
 {
-  "heroHand":"K♠Q♦","position":"BB","villainPosition":"BTN","board":"K♥J♣4♦2♠","pot":"45bb","stack":"70bb",
+  "heroHand":"K♠Q♦","position":"BB","villainPosition":"BTN","board":"K♥J♣4♦2♠","pot":"35.5bb","stack":"62.5bb",
   "streets":[
     {"name":"Pré-Flop","actions":["BTN: Raise 3bb","BB (Você): Call"]},
-    {"name":"Flop (K♥J♣4♦)","actions":["BB: Check","BTN: Bet 12bb","BB: Call"]},
-    {"name":"Turn (2♠)","actions":["BB: Check","BTN: Bet 38bb (overbet)","BB: ?"]}
+    {"name":"Flop (K♥J♣4♦)","actions":["BB: Check","BTN: Bet 4.5bb","BB: Call"]},
+    {"name":"Turn (2♠)","actions":["BB: Check","BTN: Bet 20bb (overbet)","BB: ?"]}
+  ],
+  "table":{"seats":[{"pos":"UTG","stack":80},{"pos":"HJ","stack":64},{"pos":"CO","stack":110},{"pos":"BTN","stack":95},{"pos":"SB","stack":52},{"pos":"BB","stack":70,"hero":true}]},
+  "replay":[
+    {"street":"preflop","board":"","actor":"SB","action":"post","amount":0.5,"pot":0.5,"narration":"SB posta 0.5bb."},
+    {"street":"preflop","board":"","actor":"BB","action":"post","amount":1,"pot":1.5,"narration":"Você posta o big blind com K♠Q♦."},
+    {"street":"preflop","board":"","actor":"UTG","action":"fold","amount":0,"pot":1.5,"narration":"UTG folda."},
+    {"street":"preflop","board":"","actor":"HJ","action":"fold","amount":0,"pot":1.5,"narration":"HJ folda."},
+    {"street":"preflop","board":"","actor":"CO","action":"fold","amount":0,"pot":1.5,"narration":"CO folda."},
+    {"street":"preflop","board":"","actor":"BTN","action":"raise","amount":3,"pot":4.5,"narration":"BTN abre para 3bb, range amplo de botão."},
+    {"street":"preflop","board":"","actor":"SB","action":"fold","amount":0,"pot":4.5,"narration":"SB folda."},
+    {"street":"preflop","board":"","actor":"BB","action":"call","amount":3,"pot":6.5,"narration":"Você defende e paga."},
+    {"street":"flop","board":"K♥J♣4♦","actor":null,"action":"deal","amount":0,"pot":6.5,"narration":"Flop K♥J♣4♦: você acerta top pair."},
+    {"street":"flop","board":"K♥J♣4♦","actor":"BB","action":"check","amount":0,"pot":6.5,"narration":"Você dá check."},
+    {"street":"flop","board":"K♥J♣4♦","actor":"BTN","action":"bet","amount":4.5,"pot":11,"narration":"BTN aposta 4.5bb."},
+    {"street":"flop","board":"K♥J♣4♦","actor":"BB","action":"call","amount":4.5,"pot":15.5,"narration":"Você paga."},
+    {"street":"turn","board":"K♥J♣4♦2♠","actor":null,"action":"deal","amount":0,"pot":15.5,"narration":"Turn 2♠, carta neutra."},
+    {"street":"turn","board":"K♥J♣4♦2♠","actor":"BB","action":"check","amount":0,"pot":15.5,"narration":"Você dá check de novo."},
+    {"street":"turn","board":"K♥J♣4♦2♠","actor":"BTN","action":"bet","amount":20,"pot":35.5,"narration":"BTN faz overbet de 20bb: range polarizado."},
+    {"street":"turn","board":"K♥J♣4♦2♠","actor":"BB","action":"decision","amount":0,"pot":35.5,"narration":"Top pair contra overbet. Qual é sua resposta?"}
   ],
   "narrative":"4-5 parágrafos de narração avançada sobre ${topicTitle} chegando ao momento crítico sem revelar a resposta",
   "situation":"Resumo em 1 frase da situação complexa",
   "question":"Qual é sua ação?",
-  "options":["Fold","Call 38bb","Raise 90bb","All-in"],
+  "options":["Fold","Call 20bb","Raise 55bb","All-in"],
   "correct":1,
   "analysis":{
     "explanation":"2-3 parágrafos com range thinking, MDF e ${topicTitle}. Por que as outras opções são piores.",
@@ -599,7 +659,7 @@ Retorne APENAS este JSON válido (sem markdown):
 }`;
 
   try {
-    const text = await callClaude(system, prompt, 4500);
+    const text = await callClaude(system, prompt, 6000);
     const sim = extractJson(text);
     if (!sim || !sim.options || sim.correct === undefined) throw new Error('JSON');
 
@@ -612,6 +672,7 @@ Retorne APENAS este JSON válido (sem markdown):
       }
     }
 
+    applyReplay(sim, 'practice-hand');
     res.json({ sim });
   } catch (err) {
     sendClaudeError(res, err, 'gerar mão de prática');

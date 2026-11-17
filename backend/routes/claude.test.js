@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import request from 'supertest';
+import { makeValidSim } from '../utils/replay.fixture.js';
 
 // vi.mock é hoistado pelo Vitest — intercepta antes do import do app
 vi.mock('../middleware/auth.js', () => ({
@@ -12,13 +13,12 @@ vi.mock('../middleware/auth.js', () => ({
   requireActiveAccess: (_req, _res, next) => next(),
 }));
 
+const dbMocks = vi.hoisted(() => ({ get: vi.fn(), set: vi.fn() }));
+
 vi.mock('../config/firebase.js', () => ({
   db: {
     collection: () => ({
-      doc: () => ({
-        get: vi.fn().mockResolvedValue({ exists: false }),
-        set: vi.fn().mockResolvedValue(undefined),
-      }),
+      doc: () => ({ get: dbMocks.get, set: dbMocks.set }),
     }),
   },
   auth: {
@@ -27,6 +27,11 @@ vi.mock('../config/firebase.js', () => ({
   },
   default: {},
 }));
+
+beforeEach(() => {
+  dbMocks.get.mockReset().mockResolvedValue({ exists: false });
+  dbMocks.set.mockReset().mockResolvedValue(undefined);
+});
 
 const { default: app } = await import('../app.js');
 
@@ -227,5 +232,98 @@ describe('callClaude — robustez da resposta', () => {
     expect(body.output_config).toEqual({ effort: 'low' });
     expect(typeof body.system).toBe('string');
     expect(body.system.length).toBeGreaterThan(0);
+  });
+});
+
+describe('POST /api/claude/lesson-exercises — replay', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  const question = { question: 'q', options: ['A) a', 'B) b'], correct: 0, explanation: 'e' };
+  const exercisesWith = (sims) => ({
+    quiz: { easy: [question], medium: [question], hard: [question] },
+    handSimulations: sims,
+    infiniteTraining: { concept: 'c', drill: 'd', challenge: 'x' },
+  });
+  const stubExercises = (payload) => {
+    vi.stubEnv('CLAUDE_API_KEY', 'test-key');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'req-ex' },
+      json: vi.fn().mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(payload) }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  };
+  const body = { day: 3, title: 'Equity', description: '', category: 'MATH' };
+
+  it('replay válido nas 3 simulações → 200 com replay e grava no cache', async () => {
+    stubExercises(exercisesWith({ easy: makeValidSim(), medium: makeValidSim(), hard: makeValidSim() }));
+    const res = await request(app).post('/api/claude/lesson-exercises').send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.exercises.handSimulations.easy.replay).toHaveLength(11);
+    expect(dbMocks.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('replay inválido → 200 sem replay naquela simulação e NÃO grava no cache', async () => {
+    const broken = makeValidSim();
+    broken.replay.pop();
+    stubExercises(exercisesWith({ easy: broken, medium: makeValidSim(), hard: makeValidSim() }));
+    const res = await request(app).post('/api/claude/lesson-exercises').send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.exercises.handSimulations.easy.replay).toBeUndefined();
+    expect(res.body.exercises.handSimulations.easy.narrative).toBeDefined();
+    expect(res.body.exercises.handSimulations.medium.replay).toHaveLength(11);
+    expect(dbMocks.set).not.toHaveBeenCalled();
+  });
+
+  it('cache do Firestore sem replay é ignorado e a IA é chamada', async () => {
+    dbMocks.get.mockResolvedValue({
+      exists: true,
+      data: () => ({ handSimulations: { easy: { narrative: 'antiga, sem replay' } } }),
+    });
+    const fetchMock = stubExercises(exercisesWith({ easy: makeValidSim(), medium: makeValidSim(), hard: makeValidSim() }));
+    const res = await request(app).post('/api/claude/lesson-exercises').send(body);
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(res.body.cached).toBeUndefined();
+  });
+
+  it('cache do Firestore com replay é servido sem chamar a IA', async () => {
+    dbMocks.get.mockResolvedValue({
+      exists: true,
+      data: () => ({ quiz: {}, handSimulations: { easy: makeValidSim() }, infiniteTraining: {} }),
+    });
+    const fetchMock = stubExercises({});
+    const res = await request(app).post('/api/claude/lesson-exercises').send(body);
+    expect(res.status).toBe(200);
+    expect(res.body.cached).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/claude/practice-hand — replay', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('replay inválido não derruba a mão (200 sem replay)', async () => {
+    const sim = makeValidSim();
+    sim.replay[2].action = 'muck';
+    vi.stubEnv('CLAUDE_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => 'req-ph' },
+      json: vi.fn().mockResolvedValue({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(sim) }] }),
+    }));
+    const res = await request(app).post('/api/claude/practice-hand').send({ topicTitle: 'Pot odds' });
+    expect(res.status).toBe(200);
+    expect(res.body.sim.replay).toBeUndefined();
+    expect(res.body.sim.options).toHaveLength(3);
   });
 });
